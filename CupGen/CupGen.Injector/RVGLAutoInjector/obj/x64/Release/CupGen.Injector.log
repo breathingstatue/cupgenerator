@@ -1,0 +1,6 @@
+﻿  RVGLAutoInjector.cpp
+  Generating code
+  Previous IPDB not found, fall back to full compilation.
+  All 175 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  Finished generating code
+  CupGen.Injector.vcxproj -> C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\bin\Release\RVGLAutoInjector.exe

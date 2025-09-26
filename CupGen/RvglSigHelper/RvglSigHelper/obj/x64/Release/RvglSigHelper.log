@@ -1,0 +1,9 @@
+﻿  core_sighelper.cpp
+  RvglSigHelper.cpp
+  signatures_helper.cpp
+     Creating library C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\bin\Release\RvglSigHelper.lib and object C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\bin\Release\RvglSigHelper.exp
+  Generating code
+  Previous IPDB not found, fall back to full compilation.
+  All 526 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  Finished generating code
+  RvglSigHelper.vcxproj -> C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\bin\Release\RvglSigHelper.dll

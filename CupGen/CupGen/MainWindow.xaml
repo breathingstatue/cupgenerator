@@ -1,0 +1,494 @@
+﻿<Window x:Class="CupGen.UI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:CupGen.UI"
+        xmlns:conv="clr-namespace:CupGen.UI.Converters"
+        Title="Cup Generator"
+        WindowStartupLocation="CenterScreen"
+        Height="800"
+        Width="885">
+    <Window.Resources>
+        <!-- Converter instance for carbox.bmp tooltip -->
+        <conv:CarboxTooltipMultiConverter x:Key="CarboxTooltipMultiConverter"/>
+    </Window.Resources>
+    <DockPanel>
+        <!-- Top bar -->
+        <StackPanel DockPanel.Dock="Top"
+              Orientation="Horizontal"
+              Margin="10"
+              VerticalAlignment="Center"
+              ToolTipService.InitialShowDelay="400"
+              ToolTipService.ShowDuration="10000">
+            <StackPanel.ToolTip>
+                <TextBlock TextWrapping="Wrap" MaxWidth="360">
+        <Run Text="RVGL root is the main folder that contains:"/><LineBreak/>
+        <Run Text="• downloads/"/><LineBreak/>
+        <Run Text="• packs/"/><LineBreak/>
+        <Run Text="• save/"/><LineBreak/>
+        <Run Text="…and other RVGL files/folders."/>
+                </TextBlock>
+            </StackPanel.ToolTip>
+
+            <TextBlock Text="RVGL Root:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox Text="{Binding RvglRoot, UpdateSourceTrigger=PropertyChanged}"
+             Width="380" Margin="0,0,6,0"/>
+            <Button Content="Browse…" Width="90" Margin="0,0,6,0" Click="Browse_Click"/>
+            <Button Content="Scan/Update" Width="90" Margin="0,0,10,0" Click="Scan_Click"/>
+            <TextBlock Text="Profile:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <ComboBox ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile}"
+              Width="160" Margin="-5,0,6,0" />
+        </StackPanel>
+
+        <TabControl Margin="10" Width="448">
+            <!-- Cup -->
+            <TabItem Header="Cup">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Width="400">
+                    <StackPanel Margin="10" Orientation="Vertical" HorizontalAlignment="Left">
+
+                        <!-- Basic -->
+                        <WrapPanel Margin="0,0,0,6">
+                            <TextBlock Text="Name:" Width="120" VerticalAlignment="Center"/>
+                            <TextBox Width="420" Text="{Binding Cup.Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        </WrapPanel>
+                        <WrapPanel Margin="0,0,0,6">
+                            <TextBlock Text="Difficulty [0-4]:" Width="120" VerticalAlignment="Center"/>
+                            <TextBox Width="60" Text="{Binding Cup.Difficulty}"/>
+                            <TextBlock Text="  Obtain [0-5]:" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            <TextBox Width="60" Text="{Binding Cup.Obtain}"/>
+                        </WrapPanel>
+                        <WrapPanel Margin="0,0,0,6">
+                            <TextBlock Text="NumCars [4-16]:" Width="120" VerticalAlignment="Center"/>
+                            <TextBox Width="60" Text="{Binding Cup.NumCars}"/>
+                            <TextBlock Text="  NumTries:" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            <TextBox Width="60" Text="{Binding Cup.NumTries}"/>
+                            <TextBlock Text="  QualifyPos [1-16]:" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            <TextBox Width="60" Text="{Binding Cup.QualifyPos}"/>
+                            <TextBlock Text="  UnlockPos [1-3]:" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            <TextBox Width="60" Text="{Binding Cup.UnlockPos}"/>
+                        </WrapPanel>
+
+                        <GroupBox Header="ObtainCustom (optional)" Margin="0,0,0,6">
+                            <StackPanel Margin="8">
+                                <WrapPanel Margin="0,0,0,6" VerticalAlignment="Center">
+                                    <TextBlock Text="Mode:" Width="120" VerticalAlignment="Center"/>
+                                    <ComboBox Width="220"
+                                        SelectedValue="{Binding Cup.ObtainCustomMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                        SelectedValuePath="Tag">
+                                        <ComboBoxItem Content="0 — Always allow" Tag="0"/>
+                                        <ComboBoxItem Content="1 — Require cups" Tag="1"/>
+                                        <ComboBoxItem Content="2 — Practice star" Tag="2"/>
+                                        <ComboBoxItem Content="3 — Time Trial (Normal)" Tag="3"/>
+                                        <ComboBoxItem Content="4 — Single Race win" Tag="4"/>
+                                    </ComboBox>
+                                </WrapPanel>
+                                <TextBlock Text="Arguments (space-separated)"/>
+                                <TextBox x:Name="ObtainCustomArgsBox" Text="{Binding Cup.ObtainCustomArgsRaw, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, TargetNullValue=''}">
+                                    <TextBox.ToolTip>
+                                        <StackPanel MaxWidth="440">
+                                            <TextBlock Text="Mode 1: cup IDs (filenames without extension)." TextWrapping="Wrap"/>
+                                            <TextBlock Text="Modes 2–4: track IDs (e.g., muse2 nhood1 market2)." TextWrapping="Wrap"/>
+                                            <TextBlock Text="Arguments are written inline on the ObtainCustom line." TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                    </TextBox.ToolTip>
+                                </TextBox>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <TextBlock Text="Opponents (overrides Classes):">
+                            <TextBlock.ToolTip>
+                                <StackPanel MaxWidth="420">
+                                    <TextBlock Text="AI lineup control" FontWeight="Bold"/>
+                                    <TextBlock Text="List car folder IDs (e.g., “humma adeon amw”) to fill up to 15 AI slots (player uses slot 1). Order is preserved." TextWrapping="Wrap"/>
+                                    <TextBlock Text="Unknown names are ignored. If left empty, RVGL’s class-based CPU selection is used." TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </TextBlock.ToolTip>
+                        </TextBlock>
+
+                        <ListBox x:Name="OpponentsList"
+                            ItemsSource="{Binding Cup.Opponents}"
+                            PreviewKeyDown="OpponentsList_PreviewKeyDown"
+                        Height="80"
+                                 Margin="0,6,0,0" Width="351"/>
+                        <WrapPanel Margin="0,8,0,0">
+                            <TextBlock Text="Classes CSV:" Width="120" VerticalAlignment="Center"/>
+                            <TextBox Width="420" Text="{Binding ClassesCsv}"
+                            ToolTip="Number of CPU cars picked from each rating. Example: 7,0,0,0,0,0"/>
+                        </WrapPanel>
+                        <WrapPanel Margin="0,8,0,0">
+                            <TextBlock Text="Points CSV:" Width="120" VerticalAlignment="Center"/>
+                            <TextBox Width="420" Text="{Binding PointsCsv}"
+                                     ToolTip="Scoring table for each finishing position, separated by commas. Example: 10,8,6,5,4,3,2,1,0,0"/>
+                        </WrapPanel>
+
+                        <GroupBox Header="Stages" Margin="0,6,0,0">
+                            <StackPanel Margin="8">
+                                <TextBlock Text="Set the Stage Settings on the right."/>
+                                <ListBox x:Name="StagesList"
+                                ItemsSource="{Binding StagesDisplay}"
+                                Margin="0,6,0,0"
+                                Height="111"
+                                ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                SelectionChanged="StagesList_SelectionChanged"/>
+                            </StackPanel>
+                        </GroupBox>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- Randomizer -->
+            <TabItem Header="Randomizer">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,0,-1,0">
+                    <StackPanel Margin="12" Orientation="Vertical">
+
+                        <TextBlock Text="Random Tracks" FontWeight="Bold" FontSize="14" Margin="0,0,0,6"/>
+
+                        <!-- Row 1: amount + include filters -->
+                        <WrapPanel Margin="0,0,0,6" VerticalAlignment="Center">
+                            <TextBlock Text="Amount:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBox Width="60"
+                         HorizontalContentAlignment="Right"
+                         Text="{Binding RandomAmount, UpdateSourceTrigger=PropertyChanged}"/>
+
+                            <TextBlock Text="Include:" VerticalAlignment="Center" Margin="12,0,6,0"/>
+                            <CheckBox Content="Stock"  IsChecked="{Binding IncludeStock}"  Margin="0,0,6,0"/>
+                            <CheckBox Content="Main"   IsChecked="{Binding IncludeMain}"   Margin="0,0,6,0"/>
+                            <CheckBox Content="Bonus"  IsChecked="{Binding IncludeBonus}"  />
+                        </WrapPanel>
+
+                        <!-- Row 2: mode distribution -->
+                        <WrapPanel Margin="0,10,0,6" VerticalAlignment="Center">
+                            <TextBlock Text="Modes:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
+                                <TextBlock Text="Normal" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBox Width="48" HorizontalContentAlignment="Right"
+                             Text="{Binding CountNormal, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
+                                <TextBlock Text="Reverse" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBox Width="48" HorizontalContentAlignment="Right"
+                             Text="{Binding CountReverse, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
+                                <TextBlock Text="Mirror" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBox Width="48" HorizontalContentAlignment="Right"
+                             Text="{Binding CountMirror, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Reverse Mirror" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBox Width="48" HorizontalContentAlignment="Right"
+                             Text="{Binding CountMirrorReverse, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="24,0,0,0" VerticalAlignment="Center">
+                                <CheckBox Content="No Repeats"
+                                IsChecked="{Binding NoRepeats}"
+                                VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </WrapPanel>
+
+                        <TextBlock Foreground="Gray"
+                       Text="Tip: the four mode counts should sum to Amount. If they don’t, the remainder is auto-filled as Normal."
+                       TextWrapping="Wrap" Margin="0,0,0,6"/>
+
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,6,0,0">
+                            <Button Content="Randomize"
+                        Width="120"
+                        Height="30"
+                        Click="RandomizeTracks_Click"/>
+                        </StackPanel>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- Review -->
+            <TabItem Header="Preview">
+                <GroupBox Header="Review">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <TextBox Text="{Binding Preview}"
+                                 IsReadOnly="True"
+                                 FontFamily="Consolas"
+                                 AcceptsReturn="True"
+                                 TextWrapping="NoWrap"
+                                 BorderThickness="0"
+                                 Background="Transparent" Width="401"/>
+                    </ScrollViewer>
+                </GroupBox>
+            </TabItem>
+        </TabControl>
+
+        <GroupBox Header="Library (pick from scanned content)" Margin="0,0,0,6" Width="400" HorizontalAlignment="Right">
+            <Grid Margin="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <!-- shared toolbar -->
+                    <RowDefinition Height="*"/>
+                    <!-- tabs -->
+                    <RowDefinition Height="Auto"/>
+                    <!-- bottom/action grid -->
+                </Grid.RowDefinitions>
+
+                <!-- 1) SHARED, NARROW TOOLBAR -->
+                <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                    <!-- Cars category (visible on Cars tab) -->
+                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ActiveTabIndex}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Cat:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <ComboBox Width="120"
+                  SelectedValuePath="Content"
+                  SelectedValue="{Binding SelectedCarCategory, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                            <ComboBoxItem Content="All"/>
+                            <ComboBoxItem Content="Stock"/>
+                            <ComboBoxItem Content="Main"/>
+                            <ComboBoxItem Content="Bonus"/>
+                        </ComboBox>
+                    </StackPanel>
+
+                    <!-- Tracks category (visible on Tracks tab) -->
+                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" Margin="8,0,0,0">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ActiveTabIndex}" Value="1">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Cat:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <ComboBox Width="120"
+                  SelectedValuePath="Content"
+                  SelectedValue="{Binding SelectedTrackCategory, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                            <ComboBoxItem Content="All"/>
+                            <ComboBoxItem Content="Stock"/>
+                            <ComboBoxItem Content="Main"/>
+                            <ComboBoxItem Content="Bonus"/>
+                        </ComboBox>
+                    </StackPanel>
+
+                    <!-- Shared Search (right) -->
+                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                        <TextBlock Text="Search:" VerticalAlignment="Center" Margin="10,0,15,0"/>
+                        <TextBox Width="160"
+                 Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                 ToolTip="Type to filter the current tab"/>
+                    </StackPanel>
+                </DockPanel>
+
+                <TabControl Grid.Row="1" x:Name="LibTabs" Margin="0,0,0,8"
+            SelectedIndex="{Binding ActiveTabIndex, Mode=TwoWay}">
+
+                    <!-- Cars -->
+                    <TabItem Header="Cars">
+                        <ListBox x:Name="CarsList"
+                        ItemsSource="{Binding CarsView}"
+                        SelectedItem="{Binding SelectedCarItem, Mode=TwoWay}"
+                        Height="240">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <!-- 2s delay; keep duration as you prefer -->
+                                    <Setter Property="ToolTipService.InitialShowDelay" Value="1500"/>
+                                    <Setter Property="ToolTipService.ShowDuration" Value="2000"/>
+
+                                    <Setter Property="Tag"
+                                    Value="{Binding RvglRoot, RelativeSource={RelativeSource AncestorType=Window}}"/>
+
+                                    <Setter Property="ToolTip">
+                                        <Setter.Value>
+                                            <ToolTip>
+                                                <ContentPresenter>
+                                                    <ContentPresenter.Content>
+                                                        <MultiBinding Converter="{StaticResource CarboxTooltipMultiConverter}">
+                                                            <!-- carDir -->
+                                                            <Binding Path="FullPath"/>
+                                                            <!-- display name -->
+                                                            <Binding Path="Display"/>
+                                                            <!-- RvglRoot from the *placement target’s* Tag -->
+                                                            <Binding RelativeSource="{RelativeSource AncestorType=ToolTip}"
+                                                            Path="PlacementTarget.Tag"/>
+                                                            <!-- FolderKey -->
+                                                            <Binding Path="FolderKey"/>
+                                                        </MultiBinding>
+                                                    </ContentPresenter.Content>
+                                                </ContentPresenter>
+                                            </ToolTip>
+                                        </Setter.Value>
+                                    </Setter>
+                            </Style>
+                            </ListBox.ItemContainerStyle>
+
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Display}" FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding FolderKey}" Foreground="Gray" FontSize="11"/>
+                                        <TextBlock Text="{Binding Category}"  Foreground="Gray" FontSize="11"/>
+                                        <TextBlock Text="{Binding RatingName, StringFormat=Rating: {0}}" Foreground="Gray" FontSize="11"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </TabItem>
+
+                    <!-- Tracks -->
+                    <TabItem Header="Tracks">
+                        <ListBox x:Name="TracksList"
+                            ItemsSource="{Binding TracksView}"
+                            SelectedItem="{Binding SelectedTrackItem, Mode=TwoWay}"
+                            Height="200">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Display}" FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding FolderKey}" Foreground="Gray" FontSize="11"/>
+                                        <TextBlock Text="{Binding Category}"  Foreground="Gray" FontSize="11"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </TabItem>
+
+                    <!-- Cups -->
+                    <TabItem Header="Cups">
+                        <ListBox x:Name="CupsList"
+                            ItemsSource="{Binding CupsView}"
+                            SelectedItem="{Binding SelectedCupListItem, Mode=TwoWay}"
+                            Height="200">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Display}" FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding Id}" Foreground="Gray" FontSize="11"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </TabItem>
+                </TabControl>
+
+                <!-- 3) BIG ACTION GRID (now truly in Row 2) -->
+                <Grid Grid.Row="2" Height="390" VerticalAlignment="Top" Margin="0,15,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="54.885"/>
+                        <ColumnDefinition Width="127.101"/>
+                        <ColumnDefinition Width="107.381"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Row="2" Grid.Column="0" Padding="10" Margin="12,0,12,0" BorderBrush="#DDD" BorderThickness="1" CornerRadius="6" Grid.ColumnSpan="4">
+                        <StackPanel>
+                            <TextBlock Text="Stage Settings" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                            <WrapPanel Margin="0,0,0,6">
+                                <TextBlock Text="Laps:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBox Width="48" Text="{Binding StageLaps}"/>
+                                <CheckBox Content="Mirrored" Margin="12,0,0,0" IsChecked="{Binding StageMirrored, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                <CheckBox Content="Reversed" Margin="94,0,0,0" IsChecked="{Binding StageReversed, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Content="Update Stage" Grid.Row="2" Grid.Column="0"
+                                Margin="40,10,0,0"
+                                        Width="120"
+                                Click="UpdateStage_Click"/>
+                            </WrapPanel>
+                            <TextBlock Text="Pick a track in the Tracks tab, then click Add Stage." FontSize="11" Foreground="Gray"/>
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Center" Grid.ColumnSpan="3" Margin="0,0,0,0">
+                        <Button Content="+ Add Opponent" Width="120" Height="50" Margin="0,0,5,0" Click="AddOpponent_Click"/>
+                        <Button Content="− Remove Opponent" Width="120" Margin="0,0,-20,0" Click="RemoveOpponent_Click"/>
+                    </StackPanel>
+
+                    <!-- RandomCars + Joker -->
+                    <WrapPanel Margin="0,25,-100,0" VerticalAlignment="Center">
+                        <!-- RandomCars On/Off -->
+                        <ToggleButton IsChecked="{Binding Cup.RandomCars, Mode=TwoWay}"
+                  Width="140" Height="28"
+                  ToolTip="If On: your car is chosen randomly from loaded cars.">
+                            <ToggleButton.Style>
+                                <Style TargetType="ToggleButton">
+                                    <Setter Property="Content" Value="RandomCars Off"/>
+                                    <Style.Triggers>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter Property="Content" Value="RandomCars On"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </ToggleButton.Style>
+                        </ToggleButton>
+
+                        <Border Width="12"/>
+
+                        <!-- NEW: RandomCars source flags -->
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="-12,-90,-40,0">
+                            <CheckBox Content="Stock"
+                  IsChecked="{Binding Cup.RandomCarsStock, Mode=TwoWay}"
+                  IsEnabled="{Binding Cup.RandomCars}"
+                  Margin="0,0,6,0"/>
+                            <CheckBox Content="Main"
+                  IsChecked="{Binding Cup.RandomCarsMain, Mode=TwoWay}"
+                  IsEnabled="{Binding Cup.RandomCars}"
+                  Margin="0,0,6,0"/>
+                            <CheckBox Content="Bonus"
+                  IsChecked="{Binding Cup.RandomCarsBonus, Mode=TwoWay}"
+                  IsEnabled="{Binding Cup.RandomCars}"/>
+                        </StackPanel>
+
+                        <Border Width="12"/>
+
+                        <!-- Joker line -->
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                            <TextBlock Text="Joker:" VerticalAlignment="Center" Margin="0,4,6,0"/>
+                            <Button Content="Select Car" Width="100" Margin="0,6,6,0" Click="SelectJoker_Click"/>
+                        </StackPanel>
+                        <Button Content="Remove Joker" Width="120" Margin="0,10,6,0" Click="RemoveJoker_Click"/>
+                    </WrapPanel>
+
+                    <StackPanel Grid.Row="2" Grid.Column="3" Orientation="Horizontal" HorizontalAlignment="Right" Grid.ColumnSpan="2" Margin="20,-50,0,0">
+                        <Button Content="+ Add Stage" Width="125" Height="37" Click="AddStage_Click"/>
+                    </StackPanel>
+                    <StackPanel Grid.Row="2" Grid.Column="3" Orientation="Horizontal" HorizontalAlignment="Right" Grid.ColumnSpan="2" Margin="20,20,0,0">
+                        <Button Content="− Remove Stage" Width="125" Height="30" Click="RemoveStage_Click"/>
+                    </StackPanel>
+
+                    <!-- Bottom center: Obtain buttons -->
+                    <StackPanel Grid.Row="0" Grid.Column="2"
+                                Orientation="Vertical" HorizontalAlignment="Left" Margin="90,10,0,24" Width="171" RenderTransformOrigin="0.5,0.5" Grid.ColumnSpan="3">
+                        <Button Content="+ Add to ObtainCustom (Track)" Width="171" Margin="0,25,0,10" Click="AddObtainLevel_Click"/>
+                        <Button Content="+ Add to ObtainCustom (Cup)"   Width="169" Margin="0,0,0,0" Click="AddObtainCup_Click"/>
+                    </StackPanel>
+
+                    <!-- Bottom-right action bar -->
+                    <StackPanel Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Bottom"
+                                Margin="20">
+                        <Button Content="Save Cup"
+                                ToolTip="Save the current preview to the original cup file"
+                                Click="SaveCupToOriginal_Click"
+                                Margin="0,0,0,0" Height="60" Width="120"/>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </GroupBox>
+    </DockPanel>
+</Window>

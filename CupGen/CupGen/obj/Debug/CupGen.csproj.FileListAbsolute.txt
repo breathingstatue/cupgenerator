@@ -1,0 +1,13 @@
+C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\bin\Debug\CupGen.exe
+C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\bin\Debug\CupGen.pdb
+C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\obj\Debug\CupGen.csproj.AssemblyReference.cache
+C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\obj\Debug\MainWindow.baml
+C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\obj\Debug\MainWindow.g.cs
+C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\obj\Debug\CupGen.UI.App.g.cs
+C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\obj\Debug\CupGen_MarkupCompile.cache
+C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\obj\Debug\CupGen.g.resources
+C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\obj\Debug\CupGen.Properties.Resources.resources
+C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\obj\Debug\CupGen.csproj.GenerateResource.cache
+C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\obj\Debug\CupGen.csproj.CoreCompileInputs.cache
+C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\obj\Debug\CupGen.exe
+C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\obj\Debug\CupGen.pdb

@@ -26,47 +26,6 @@
 #define MAX_PATH 260
 #endif
 
-// Minimal logger shim (only if core.cpp isn't linked)
-#ifndef CUPGEN_HAVE_CORE_LOGF
-#include <cstdarg>
-#include <cstdio>
-#include <cstring>
-#include <windows.h>
-
-static HANDLE g_log_h = INVALID_HANDLE_VALUE;
-
-static void ensure_log_open() {
-    if (g_log_h != INVALID_HANDLE_VALUE) return;
-
-    char tmp[MAX_PATH]{ 0 }, path[MAX_PATH]{ 0 };
-    GetTempPathA(MAX_PATH, tmp);
-    _snprintf(path, MAX_PATH, "%s%s", tmp, "RVGLOpp.log");
-
-    g_log_h = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
-        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (g_log_h != INVALID_HANDLE_VALUE) {
-        SetFilePointer(g_log_h, 0, nullptr, FILE_END); // append
-    }
-}
-
-void __cdecl logf(const char* fmt, ...) {
-    ensure_log_open();
-
-    char buf[2048];
-    va_list ap; va_start(ap, fmt);
-    int n = _vsnprintf_s(buf, sizeof(buf), _TRUNCATE, fmt, ap);
-    va_end(ap);
-    if (n < 0) n = (int)strlen(buf);
-
-    DWORD wrote;
-    if (g_log_h != INVALID_HANDLE_VALUE && n > 0) {
-        WriteFile(g_log_h, buf, (DWORD)n, &wrote, nullptr);
-    }
-    // Also mirror to debugger
-    OutputDebugStringA(buf);
-}
-#endif
-
 // ======================================================
 //               RVAs / ABSOLUTE ADDRESSES
 // ======================================================
@@ -902,18 +861,16 @@ static bool ReadObtainCustomLine(const char* cupPath, int& outMode, std::vector<
     return found;
 }
 
+// --- log-free ---
 static void RefreshCupRowById_Unlocked(const std::string& cupId) {
     if (cupId.empty()) return;
 
     const std::string path = cups_base_dir() + "\\" + cupId + ".txt";
 
-    // NEW: prefer pointer learned from hkCupFinalize; fallback to old finder
+    // Prefer pointer learned from hkCupFinalize; fallback to scan
     uint8_t* cup = RowPtrForId(cupId);
     if (!cup) cup = FindCupStructById(cupId.c_str());
-    if (!cup) {
-        logf("[FE] RefreshCupRowById_Unlocked(%s): cup struct not found in UI list.\n", cupId.c_str());
-        return;
-    }
+    if (!cup) return;
 
     int diff = 1, stages = 0;
     ParseDiffAndStageCount(path.c_str(), diff, stages);
@@ -921,7 +878,7 @@ static void RefreshCupRowById_Unlocked(const std::string& cupId) {
     char* c = reinterpret_cast<char*>(cup);
     *reinterpret_cast<int*>(c + OFF_DIFFICULTY) = diff;
     *reinterpret_cast<int*>(c + OFF_MAXSTAGES) = stages;
-    c[OFF_LOCKBYTE] = 0; // clear locked/needs-gen hint
+    c[OFF_LOCKBYTE] = 0; // unlocked
 
     if (std::string nm = ParseCupNameOnly(path.c_str()); !nm.empty()) {
         const size_t cap = 31;
@@ -932,11 +889,8 @@ static void RefreshCupRowById_Unlocked(const std::string& cupId) {
     }
 
     if (oCupFinalize) {
-        oCupFinalize(cup); // let the game rebuild derived fields for that entry
+        oCupFinalize(cup); // rebuild derived fields
     }
-
-    logf("[FE] RefreshCupRowById_Unlocked(%s): row updated (diff=%d, stages=%d).\n",
-        cupId.c_str(), diff, stages);
 }
 
 static bool WaitForMenuListsReady(DWORD timeout_ms = 2500, DWORD poll_ms = 50)
@@ -1265,6 +1219,7 @@ static void MaybeRefreshCurrentlySelectedIfJustUnlocked()
     }
 }
 
+// --- log-free ---
 static void RebuildUnlockCache_AllCups()
 {
     const std::string pattern = cups_base_dir() + "\\*.txt";
@@ -1272,18 +1227,17 @@ static void RebuildUnlockCache_AllCups()
     WIN32_FIND_DATAA fd{};
     HANDLE h = FindFirstFileA(pattern.c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) {
-        logf("[FE] RebuildUnlockCache: no cups found in %s\n", cups_base_dir().c_str());
         return;
     }
 
-    int changed = 0; // how many flipped locked->unlocked
+    int changed = 0;
 
     do {
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
             continue;
 
         std::string fn = fd.cFileName;
-        // strip ".txt" to get id
+        // must end with .txt
         if (fn.size() <= 4 || _stricmp(fn.substr(fn.size() - 4).c_str(), ".txt") != 0)
             continue;
 
@@ -1295,24 +1249,18 @@ static void RebuildUnlockCache_AllCups()
         const bool  wasUnlocked = (it != g_unlockCache.end()) ? it->second : false;
 
         if (!wasUnlocked && unlockedNow) {
-            // Row-level refresh (no selection bounce here)
-            logf("[FE] RebuildUnlockCache: %s flipped to unlocked – refreshing row.\n", id.c_str());
             RefreshCupRowById_Unlocked(id);
             ++changed;
         }
 
-        // keep cache coherent
         g_unlockCache[id] = unlockedNow;
 
     } while (FindNextFileA(h, &fd));
     FindClose(h);
 
     if (changed > 0) {
-        logf("[FE] RebuildUnlockCache: %d cups unlocked this pass. Forcing one repaint bounce.\n", changed);
-        ForceMenuRedrawBySelectionBounce(); // single repaint for the batch
-    }
-    else {
-        logf("[FE] RebuildUnlockCache: no changes.\n");
+        // single repaint for the batch
+        ForceMenuRedrawBySelectionBounce();
     }
 }
 
@@ -1773,46 +1721,34 @@ static void __cdecl hkRaceResults()
 }
 #endif
 
-
-
 // Small helper to log last-error with a label
-static void log_last_error(const char* tag, DWORD err) {
-    if (!err) err = GetLastError();
-    logf("[FE] %s: GetLastError=%lu (0x%08lX)\n", tag, (unsigned long)err, (unsigned long)err);
+// --- log-free (no-op) ---
+static void log_last_error(const char* /*tag*/, DWORD err) {
+    (void)err;
+    // Intentionally left blank (logging removed).
 }
 
+// --- log-free ---
 static void hkFrontendInit() {
-    logf("[FE] FrontendInit hook ENTER (abs=%p, orig=%p)\n",
-        (void*)ABS_FN_FRONTEND_INIT(), (void*)oFrontendInit);
-
-    // The list is about to rebuild; drop stale row pointers we learned earlier.
+    // Drop stale row pointers before FE rebuild.
     g_uiRowPtrById.clear();
 
     // Run the game's init first so FE lists/selection are rebuilt normally.
     if (oFrontendInit) {
         oFrontendInit();
-        logf("[FE] FrontendInit original returned.\n");
-    }
-    else {
-        logf("[FE] WARNING: oFrontendInit is null; continuing worker anyway.\n");
     }
 
     // Keep cache keyed to the active profile on disk.
-    logf("[FE/worker] Start. profile='%s'\n", active_profile_name().c_str());
     EnsureCacheProfileUpToDate();
 
-    // FE just rebuilt the lists; wait once until the custom list has its first valid id.
-    // (Prevents touching menu memory too early.)
+    // Wait until custom list has its first valid id to avoid touching FE too early.
     WaitForMenuListsReady(/*timeout_ms=*/2500, /*poll_ms=*/50);
 
-    // Do the same immediate maintenance you do after RaceResults:
-    //  1) Rebuild the unlock cache from disk (.level flags, ObtainCustom, etc.)
-    //  2) If the currently selected cup just flipped → finalize its row so UI reflects it.
+    // Immediate maintenance: rebuild unlock cache and refresh selected if it flipped.
     RebuildUnlockCache_AllCups();
     MaybeRefreshCurrentlySelectedIfJustUnlocked();
 
-    // Optional: also schedule a slightly delayed pass (matches your race hook pattern)
-    // in case FE continues lazy-loading or writing .level flags shortly after.
+    // Schedule a delayed pass (in case FE continues lazy-loading).
     QueueDelayedRescan(700);
     ApplyPendingMenuRefreshOnMainThread(); // harmless if nothing pending
 }

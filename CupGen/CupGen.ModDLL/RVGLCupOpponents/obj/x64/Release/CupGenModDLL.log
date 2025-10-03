@@ -1,42 +1,12 @@
-﻿  addresses.cpp
-  core.cpp
-  CupGenGlobals.cpp
-  dllmain.cpp
-C:\Users\ilari\source\repos\CupGen\CupGen\CupGen.ModDLL\CupGenGlobals.cpp(54,10): warning C4273: 'CupGen::SetRvglRoot': inconsistent dll linkage
-      C:\Users\ilari\source\repos\CupGen\CupGen\CupGen.ModDLL\CupGenGlobals.h(20,21):
-      see previous definition of 'CupGen::SetRvglRoot'
+﻿  obtainmod.cpp
+C:\Users\ilari\source\repos\CupGen\CupGen\CupGen.ModDLL\obtainmod.cpp(5,9): warning C4005: '_CRT_SECURE_NO_WARNINGS': macro redefinition
+      C:\Users\ilari\source\repos\CupGen\CupGen\CupGen.ModDLL\obtainmod.cpp(5,9):
+      '_CRT_SECURE_NO_WARNINGS' previously declared on the command line
   
-C:\Users\ilari\source\repos\CupGen\CupGen\CupGen.ModDLL\CupGenGlobals.cpp(68,43): warning C4273: 'CupGen::CupGen_SetRvglRoot': inconsistent dll linkage
-      C:\Users\ilari\source\repos\CupGen\CupGen\CupGen.ModDLL\CupGenGlobals.h(23,32):
-      see previous definition of 'CupGen::CupGen_SetRvglRoot'
-  
-C:\Users\ilari\source\repos\CupGen\CupGen\CupGen.ModDLL\CupGenGlobals.cpp(73,24): warning C4273: 'CupGen::RvglRoot': inconsistent dll linkage
-      C:\Users\ilari\source\repos\CupGen\CupGen\CupGen.ModDLL\CupGenGlobals.h(26,35):
-      see previous definition of 'CupGen::RvglRoot'
-  
-C:\Users\ilari\source\repos\CupGen\CupGen\CupGen.ModDLL\CupGenGlobals.cpp(80,24): warning C4273: 'CupGen::ProfilesBase': inconsistent dll linkage
-      C:\Users\ilari\source\repos\CupGen\CupGen\CupGen.ModDLL\CupGenGlobals.h(27,35):
-      see previous definition of 'CupGen::ProfilesBase'
-  
-C:\Users\ilari\source\repos\CupGen\CupGen\CupGen.ModDLL\CupGenGlobals.cpp(81,24): warning C4273: 'CupGen::CupsDir': inconsistent dll linkage
-      C:\Users\ilari\source\repos\CupGen\CupGen\CupGen.ModDLL\CupGenGlobals.h(28,35):
-      see previous definition of 'CupGen::CupsDir'
-  
-C:\Users\ilari\source\repos\CupGen\CupGen\CupGen.ModDLL\CupGenGlobals.cpp(82,24): warning C4273: 'CupGen::CupGenDir': inconsistent dll linkage
-      C:\Users\ilari\source\repos\CupGen\CupGen\CupGen.ModDLL\CupGenGlobals.h(29,35):
-      see previous definition of 'CupGen::CupGenDir'
-  
-C:\Users\ilari\source\repos\CupGen\CupGen\CupGen.ModDLL\CupGenGlobals.cpp(83,24): warning C4273: 'CupGen::CupGenLogsDir': inconsistent dll linkage
-      C:\Users\ilari\source\repos\CupGen\CupGen\CupGen.ModDLL\CupGenGlobals.h(30,35):
-      see previous definition of 'CupGen::CupGenLogsDir'
-  
-  obtainmod.cpp
-  opponentsmod.cpp
-  signatures.cpp
      Creating library C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\bin\Release\RVGLCupOpponents.lib and object C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\bin\Release\RVGLCupOpponents.exp
-  Previous IPDB not found, fall back to full compilation.
+  Previous IPDB and IOBJ mismatch, fall back to full compilation.
 LINK : warning LNK4098: defaultlib 'LIBCMT' conflicts with use of other libs; use /NODEFAULTLIB:library
   Generating code
-  All 1353 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  All 1520 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
   Finished generating code
   CupGenModDLL.vcxproj -> C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\bin\Release\RVGLCupOpponents.dll

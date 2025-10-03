@@ -1,5 +1,6 @@
 ﻿// opponentsmod.cpp — Opponents lineup + optional grid reordering (unified)
-
+#define _CRT_SECURE_NO_WARNINGS
+#define _CRT_NONSTDC_NO_WARNINGS
 #define NOMINMAX
 #include <windows.h>
 #include <algorithm>
@@ -633,31 +634,31 @@ static void ApplyStartGridPolicy() {
 
 // ============================== Hooks ==============================
 
-using FnLoadCars = void(*)();
-using FnBuildGrid = void(*)();    // final grid builder
+// 1) Calling-convention macro & typedefs
+#if defined(_M_IX86)
+#  define RVGL_FASTCALL __fastcall
+#else
+#  define RVGL_FASTCALL __fastcall
+#endif
+
+using FnLoadCars = void (RVGL_FASTCALL*)(void);
+using FnBuildGrid = void (RVGL_FASTCALL*)(void);
 
 static FnLoadCars  s_LoadCars_Orig = nullptr;
 static FnBuildGrid s_BuildGrid_Orig = nullptr;
 
-static void __fastcall LoadCars_Hook() {
-    // Late gate: evaluate ObtainCustom now that the active id exists.
-    if (!ObtainMod::EnsureGateForCurrentCupOnce()) {
-        // Cup was blocked -> keep things consistent and bail out cleanly.
-        return;
-    }
-
+// 2) Detour signatures must match
+static void RVGL_FASTCALL LoadCars_Hook() {
+    if (!ObtainMod::EnsureGateForCurrentCupOnce()) return;
     if (s_LoadCars_Orig) s_LoadCars_Orig();
     SnapshotRegistry("Loader");
     BuildFolderIndex();
 }
 
-static void __fastcall BuildGrid_Hook() {
-    if (!active_cup()) {
-        if (s_BuildGrid_Orig) s_BuildGrid_Orig();
-        return;
-    }
+static void RVGL_FASTCALL BuildGrid_Hook() {
+    if (!active_cup()) { if (s_BuildGrid_Orig) s_BuildGrid_Orig(); return; }
     EnsureSnapshotIfNeeded("BuildGrid");
-    LoadOpponentsFromCup();        // refresh (Opponents / StartGrid / Joker / RandomCars / Joker name)
+    LoadOpponentsFromCup();
     ResolveOppIndices();
 
     // --- Decide/assign PLAYER car first ---

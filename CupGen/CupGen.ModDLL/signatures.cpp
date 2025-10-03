@@ -107,15 +107,19 @@ bool LoadHookRVAsFromJson(const wchar_t* jsonPath, HookAddrs& out) {
     DWORD rd = 0;
     BOOL ok = ReadFile(h, s.data(), sz, &rd, nullptr);
     CloseHandle(h);
-    if (!ok) return false;          // handle read error
+    if (!ok) return false;
 
-    // UTF-8 first, ANSI fallback
-    int wlen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), (int)rd, nullptr, 0);
-    if (wlen <= 0) wlen = MultiByteToWideChar(CP_ACP, 0, s.data(), (int)rd, nullptr, 0);
+    // Try UTF-8 first, then ANSI
+    UINT  cp = CP_UTF8;
+    DWORD flags = MB_ERR_INVALID_CHARS;
+    int   wlen = MultiByteToWideChar(cp, flags, s.data(), (int)rd, nullptr, 0);
+    if (wlen <= 0) {
+        cp = CP_ACP; flags = 0;
+        wlen = MultiByteToWideChar(cp, flags, s.data(), (int)rd, nullptr, 0);
+        if (wlen <= 0) return false; // give up
+    }
     std::wstring w; w.resize(wlen);
-    MultiByteToWideChar((wlen > 0 ? CP_UTF8 : CP_ACP),
-        (wlen > 0 ? MB_ERR_INVALID_CHARS : 0),
-        s.data(), (int)rd, w.data(), wlen);
+    MultiByteToWideChar(cp, flags, s.data(), (int)rd, w.data(), wlen);
 
     extract_hex_field(w, L"rva_LoadCars", out.rva_LoadCars);
     extract_hex_field(w, L"rva_CupParse", out.rva_CupParse);
@@ -128,6 +132,10 @@ bool LoadHookRVAsFromJson(const wchar_t* jsonPath, HookAddrs& out) {
     extract_hex_field(w, L"rva_PlayersCount", out.rva_PlayersCount);
     extract_hex_field(w, L"rva_RaceResults", out.rva_RaceResults);
     extract_hex_field(w, L"rva_CupFinalize", out.rva_CupFinalize);
+    extract_hex_field(w, L"rva_MenuState", out.rva_MenuState);
+    extract_hex_field(w, L"rva_BuiltinCupsBase", out.rva_BuiltinCupsBase);
+    extract_hex_field(w, L"rva_CustomCupsList", out.rva_CustomCupsList);
+    extract_hex_field(w, L"rva_FrontendInit", out.rva_FrontendInit);
 
     // Parse rva_OppSlotIndex as an array of "0x..." strings
     {
@@ -155,6 +163,21 @@ bool LoadHookRVAsFromJson(const wchar_t* jsonPath, HookAddrs& out) {
     return true;
 }
 
+static std::wstring JsonEscape(const wchar_t* s) {
+    std::wstring o; if (!s) return o;
+    for (wchar_t c; (c = *s++); ) {
+        switch (c) {
+        case L'\\': o += L"\\\\"; break;
+        case L'"':  o += L"\\\""; break;
+        case L'\n': o += L"\\n";  break;
+        case L'\r': o += L"\\r";  break;
+        case L'\t': o += L"\\t";  break;
+        default:    o.push_back(c); break;
+        }
+    }
+    return o;
+}
+
 bool SaveHookRVAsToJson(const wchar_t* jsonPath,
     const HookAddrs& a,
     const wchar_t* rvglExePath,
@@ -171,8 +194,14 @@ bool SaveHookRVAsToJson(const wchar_t* jsonPath,
     const std::wstring dir = DirName(jsonPath);
     if (!dir.empty()) CreateDirectoryW(dir.c_str(), nullptr);
 
-    wchar_t head[1024];
-    int w = swprintf_s(head, L"{\n"
+    std::wstring pathEsc = JsonEscape(rvglExePath ? rvglExePath : L"");
+    const wchar_t* escPath = pathEsc.c_str();
+
+    // assume escPath/timeIso are already JSON-escaped wide strings
+    wchar_t head[2048];
+    int w = swprintf_s(
+        head,
+        L"{\n"
         L"  \"schema_version\": 1,\n"
         L"  \"rvgl_path\": \"%s\",\n"
         L"  \"rvgl_last_write\": \"%s\",\n"
@@ -186,12 +215,30 @@ bool SaveHookRVAsToJson(const wchar_t* jsonPath,
         L"  \"rva_PlayersBase\": \"0x%08X\",\n"
         L"  \"rva_PlayersCount\": \"0x%08X\",\n"
         L"  \"rva_RaceResults\": \"0x%08X\",\n"
-        L"  \"rva_CupFinalize\": \"0x%08X\"",
-        rvglExePath ? rvglExePath : L"", timeIso,
-        a.rva_LoadCars, a.rva_CupParse, a.rva_BuildGrid,
-        a.rva_CarTablePtr, a.rva_CarCount, a.rva_AISlot0,
-        a.rva_ActiveCupPtr, a.rva_PlayersBase, a.rva_PlayersCount,
-        a.rva_RaceResults, a.rva_CupFinalize);
+        L"  \"rva_CupFinalize\": \"0x%08X\",\n"
+        L"  \"rva_MenuState\": \"0x%08X\",\n"
+        L"  \"rva_BuiltinCupsBase\": \"0x%08X\",\n"
+        L"  \"rva_CustomCupsList\": \"0x%08X\",\n"
+        L"  \"rva_FrontendInit\": \"0x%08X\",\n"
+        L"}\n",
+        escPath ? escPath : L"",
+        timeIso ? timeIso : L"",
+        (unsigned)a.rva_LoadCars,
+        (unsigned)a.rva_CupParse,
+        (unsigned)a.rva_BuildGrid,
+        (unsigned)a.rva_CarTablePtr,
+        (unsigned)a.rva_CarCount,
+        (unsigned)a.rva_AISlot0,
+        (unsigned)a.rva_ActiveCupPtr,
+        (unsigned)a.rva_PlayersBase,
+        (unsigned)a.rva_PlayersCount,
+        (unsigned)a.rva_RaceResults,
+        (unsigned)a.rva_CupFinalize,
+        (unsigned)a.rva_MenuState,
+        (unsigned)a.rva_BuiltinCupsBase,
+        (unsigned)a.rva_CustomCupsList,
+        (unsigned)a.rva_FrontendInit
+    );
 
     std::wstring out(head, (size_t)w);
     out += L",\n  \"rva_OppSlotIndex\": [\n    ";

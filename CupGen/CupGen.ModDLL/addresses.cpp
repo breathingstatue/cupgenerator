@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+#define _CRT_NONSTDC_NO_WARNINGS
 #include "addresses.h"
 #include "signatures.h"   // JSON + path helpers
 #include "CupGenGlobals.h"   // CupGen::CupGenDir()
@@ -64,6 +66,10 @@ static bool LoadUpdateJson_ModFolder(HookAddrs& out) {
     ok += getHex("\"rva_PlayersCount\"", out.rva_PlayersCount);
     ok += getHex("\"rva_RaceResults\"", out.rva_RaceResults);
     ok += getHex("\"rva_CupFinalize\"", out.rva_CupFinalize);
+    ok += getHex("\"rva_MenuState\"", out.rva_MenuState);
+    ok += getHex("\"rva_BuiltinCupsBase\"", out.rva_BuiltinCupsBase);
+    ok += getHex("\"rva_CustomCupsList\"", out.rva_CustomCupsList);
+    ok += getHex("\"rva_FrontendInit\"", out.rva_FrontendInit);
 
     // Opp slots
     auto arr = s.find("\"rva_OppSlotIndex\"");

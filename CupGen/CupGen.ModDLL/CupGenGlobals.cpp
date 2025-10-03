@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+#define _CRT_NONSTDC_NO_WARNINGS
 #include "CupGenGlobals.h"
 #include <algorithm>
 #include <string>
@@ -16,10 +18,33 @@ namespace {
     std::string gCupGen;
     std::string gCupGenLogs;
 
+    // Put this above strip_launcher_suffix in CupGenGlobals.cpp
     static inline void norm(std::string& s) {
-        for (auto& c : s) if (c == '/') c = '\\';
+        for (auto& ch : s) if (ch == '/') ch = '\\';
         while (!s.empty() && (s.back() == '\\' || s.back() == '/')) s.pop_back();
     }
+
+    static inline std::string strip_launcher_suffix(std::string ed) {
+        norm(ed); // normalize to backslashes, trim trailing slashes
+        // Try the two known launcher dirs:
+        const char* suffixes[] = { "\\packs\\rvgl_win64", "\\packs\\rvgl_win32" };
+        for (auto sfx : suffixes) {
+            auto pos = ed.rfind(sfx);
+            if (pos != std::string::npos && pos + std::strlen(sfx) == ed.size()) {
+                return ed.substr(0, pos);
+            }
+        }
+        // Generic safety: if we see "\packs\rvgl_win??" as the last two segments, strip them
+        auto packsPos = ed.rfind("\\packs\\");
+        if (packsPos != std::string::npos) {
+            auto tail = ed.substr(packsPos + 7); // after "\packs\"
+            if (tail.rfind("rvgl_win", 0) == 0) {
+                return ed.substr(0, packsPos);
+            }
+        }
+        return ed; // no launcher path, assume ed is already the root
+    }
+
     static inline void ensure_dir(const std::string& p) {
         char tmp[MAX_PATH]; std::strncpy(tmp, p.c_str(), MAX_PATH - 1); tmp[MAX_PATH - 1] = 0;
         for (char* q = tmp + 1; *q; ++q) {
@@ -51,17 +76,14 @@ namespace {
 }
 
 namespace CupGen {
-    void SetRvglRoot(const char* rootAbs) {
+    void CupGen::SetRvglRoot(const char* rootAbs) {
         if (!rootAbs || !*rootAbs) {
-            // Fallback: try to infer by stripping “…\packs\rvgl_win64” from exe dir if present
-            std::string ed = exe_dir();
-            auto pos = ed.rfind("\\packs\\rvgl_win64");
-            gRoot = (pos != std::string::npos) ? ed.substr(0, pos) : ed; // last resort: exe dir
+            gRoot = strip_launcher_suffix(exe_dir());
         }
         else {
             gRoot = rootAbs;
+            norm(gRoot);
         }
-        norm(gRoot);
         rebuild();
     }
 

@@ -2,9 +2,11 @@
 // CupGen "ObtainCustom" gating + temp-based series tracking for RVGL (verbose debug)
 // Build: x64, /std:c++17
 // Requires: core.h providing HookFunction, AbsFromMaybeRva, logf
-
+#define _CRT_SECURE_NO_WARNINGS
+#define _CRT_NONSTDC_NO_WARNINGS
 #define NOMINMAX
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -13,6 +15,7 @@
 #include <direct.h>
 #include <windows.h>
 #include <unordered_map>
+#include <unordered_set>
 #include "core.h"       // HookFunction, AbsFromMaybeRva, logf
 #include "obtainmod.h"
 #include "CupGenGlobals.h"
@@ -21,6 +24,47 @@
 
 #ifndef MAX_PATH
 #define MAX_PATH 260
+#endif
+
+// Minimal logger shim (only if core.cpp isn't linked)
+#ifndef CUPGEN_HAVE_CORE_LOGF
+#include <cstdarg>
+#include <cstdio>
+#include <cstring>
+#include <windows.h>
+
+static HANDLE g_log_h = INVALID_HANDLE_VALUE;
+
+static void ensure_log_open() {
+    if (g_log_h != INVALID_HANDLE_VALUE) return;
+
+    char tmp[MAX_PATH]{ 0 }, path[MAX_PATH]{ 0 };
+    GetTempPathA(MAX_PATH, tmp);
+    _snprintf(path, MAX_PATH, "%s%s", tmp, "RVGLOpp.log");
+
+    g_log_h = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (g_log_h != INVALID_HANDLE_VALUE) {
+        SetFilePointer(g_log_h, 0, nullptr, FILE_END); // append
+    }
+}
+
+void __cdecl logf(const char* fmt, ...) {
+    ensure_log_open();
+
+    char buf[2048];
+    va_list ap; va_start(ap, fmt);
+    int n = _vsnprintf_s(buf, sizeof(buf), _TRUNCATE, fmt, ap);
+    va_end(ap);
+    if (n < 0) n = (int)strlen(buf);
+
+    DWORD wrote;
+    if (g_log_h != INVALID_HANDLE_VALUE && n > 0) {
+        WriteFile(g_log_h, buf, (DWORD)n, &wrote, nullptr);
+    }
+    // Also mirror to debugger
+    OutputDebugStringA(buf);
+}
 #endif
 
 // ======================================================
@@ -38,6 +82,9 @@ static inline void** PP_ACTIVE_CUP() { return reinterpret_cast<void**>(AbsFromMa
 static inline uint8_t* PLAYERS_BASE() { return reinterpret_cast<uint8_t*>(AbsFromMaybeRva(g_addrs.rva_PlayersBase)); }
 static inline int* PLAYERS_COUNT() { return reinterpret_cast<int*>(AbsFromMaybeRva(g_addrs.rva_PlayersCount)); }
 
+// ==== ABS for FrontendInit ====
+static inline uintptr_t ABS_FN_FRONTEND_INIT() { return AbsFromMaybeRva(g_addrs.rva_FrontendInit); }
+
 // Offsets inside the cup struct (unchanged)
 static constexpr int OFF_NAME = 0x00;
 static constexpr int OFF_CUP_ID = 0x20;
@@ -49,6 +96,33 @@ static constexpr int OFF_LOCKBYTE = 0x195;
 
 // Player struct (for profile-name match)
 static constexpr int OFF_PLAYER_NAME = 0x6A70;
+
+static constexpr int CUP_STRIDE = 0x198;
+
+#if defined(_M_X64)
+// x64: the game uses the Windows x64 ABI; your existing __fastcall-based shim is fine.
+using tStartCup = void(__fastcall*)(void*, void*, void*, void*);
+using tRaceResults = void(__fastcall*)(unsigned long long);
+using tCupFinalize = void(*)(void*);               // plain function taking a pointer
+using tAfterCupFinish = void(__fastcall*)(void*);
+
+#else // 32-bit
+// x86: be conservative. StartCup is effectively a method -> __thiscall (ecx=this).
+// RaceResults is typically a free function we don't need args from -> __cdecl with 0 args.
+// CupFinalize looks like a free function taking a single pointer -> __cdecl(void*).
+using tStartCup = void(__thiscall*)(void* /*this*/);
+using tRaceResults = void(__cdecl*)();
+using tCupFinalize = void(__cdecl*)(void*);
+using tAfterCupFinish = void(__thiscall*)(void*);
+#endif
+
+static tStartCup    oStartCup = nullptr;
+static tRaceResults oRaceResults = nullptr;
+static tCupFinalize oCupFinalize = nullptr;
+static tAfterCupFinish oAfterCupFinish = nullptr;
+
+using tFrontendInit = void(*)();
+static tFrontendInit oFrontendInit = nullptr;
 
 // ======================================================
 //                     State (process-wide)
@@ -73,21 +147,47 @@ static std::vector<std::string> g_obtainCustomArgs;
 //                    Small utils / fs
 // ======================================================
 
+static inline uint8_t* menu_state_ptr() {
+    if (!g_addrs.rva_MenuState) return nullptr;
+    auto pptr = reinterpret_cast<uint8_t**>(AbsFromMaybeRva(g_addrs.rva_MenuState));
+    return pptr ? *pptr : nullptr;
+}
+
 static inline int selected_index() {
-    auto p = *reinterpret_cast<uint8_t**>(0x006A7910);
+    auto p = menu_state_ptr();
+    // selected index lives at [*MenuState + 0x04]
     return p ? *reinterpret_cast<int*>(p + 4) : 0;
 }
-static inline uint8_t* selected_cup_ptr_from_index(int idx) {
-    if (idx > 4) {
-        auto list = *reinterpret_cast<uint8_t**>(0x006FBBC8); // custom cups array
-        return list ? (list + (idx - 4) * 0x198) : nullptr;
-    }
-    else {
-        return reinterpret_cast<uint8_t*>(0x0065F4A0) + idx * 0x198; // built-ins
-    }
+
+static inline uint8_t* builtin_cups_base() {
+    if (!g_addrs.rva_BuiltinCupsBase) return nullptr;
+    return reinterpret_cast<uint8_t*>(AbsFromMaybeRva(g_addrs.rva_BuiltinCupsBase));
 }
+
+static inline uint8_t* custom_cups_list_ptr() {
+    if (!g_addrs.rva_CustomCupsList) return nullptr;
+    auto pptr = reinterpret_cast<uint8_t**>(AbsFromMaybeRva(g_addrs.rva_CustomCupsList));
+    return pptr ? *pptr : nullptr;  // start of the custom cups array
+}
+
 static inline const char* cup_id_from_ptr(uint8_t* cup) {
     return cup ? reinterpret_cast<const char*>(cup + OFF_CUP_ID) : nullptr; // +0x20
+}
+
+static inline uint8_t* selected_cup_ptr_from_index(int idx) {
+    constexpr int kBuiltinCount = 5;
+    if (idx < 0) return nullptr;
+    if (idx < kBuiltinCount) {
+        auto base = builtin_cups_base();
+        return base ? (base + idx * CUP_STRIDE) : nullptr;
+    }
+    auto list = custom_cups_list_ptr();
+    if (!list) return nullptr;
+    const int ci = idx - kBuiltinCount;
+    if (ci < 0) return nullptr;
+    uint8_t* c = list + ci * CUP_STRIDE;
+    const char* id = cup_id_from_ptr(c);
+    return (id && *id) ? c : nullptr;
 }
 
 static inline void ensure_dir(const char* path) {
@@ -149,11 +249,6 @@ static std::string read_text_file(const std::string& p) {
 
 // One-shot latch so we only set the path once per session (optional)
 static bool g_cupResolvedOnce = false;
-
-static inline const char* cup_id_from_struct(void* cupStruct) {
-    if (!cupStruct) return nullptr;
-    return reinterpret_cast<const char*>(reinterpret_cast<uint8_t*>(cupStruct) + OFF_CUP_ID); // +0x20
-}
 
 // --- Minimal parser that only fills selector-visible fields ---
 static void MiniParseForMenu(void* cupStruct, const char* cupPath)
@@ -276,23 +371,6 @@ static bool ParseDiffAndStageCount(const char* cupPath, int& outDiff, int& outSt
     return true;
 }
 
-// ===== Menu memory helpers =====
-
-// Menu state block: *(0x006A7910) points to a struct where [ +4 ] is current selection index
-static inline uint8_t* menu_state_ptr() {
-    return *reinterpret_cast<uint8_t**>(0x006A7910);
-}
-
-// Builtin cups base (fixed) and stride; customs list pointer and same stride
-static inline uint8_t* builtin_cups_base() { return reinterpret_cast<uint8_t*>(0x0065F4A0); }
-static inline uint8_t* custom_cups_base() { return *reinterpret_cast<uint8_t**>(0x006FBBC8); }
-static constexpr int   CUP_STRIDE = 0x198;
-
-// Read cup id field
-static inline const char* cup_id_from_struct(uint8_t* cup) {
-    return cup ? reinterpret_cast<const char*>(cup + OFF_CUP_ID) : nullptr;
-}
-
 // Find a cup struct by id in builtin (first ~5) or custom list (scan until empty id)
 static uint8_t* FindCupStructById(const char* targetId) {
     if (!targetId || !*targetId) return nullptr;
@@ -302,19 +380,19 @@ static uint8_t* FindCupStructById(const char* targetId) {
         uint8_t* base = builtin_cups_base();
         for (int i = 0; i < 5; ++i) {
             uint8_t* c = base + i * CUP_STRIDE;
-            if (const char* id = cup_id_from_struct(c)) {
+            if (const char* id = cup_id_from_ptr(c)) {
                 if (*id && _stricmp(id, targetId) == 0) return c;
             }
         }
     }
 
-    // 2) Customs: array at 0x006FBBC8; scan up to a sane cap (e.g. 512), stop at first empty id
+    // 2) Customs: scan up to a sane cap (e.g. 512), stop at first empty id
     {
-        uint8_t* base = custom_cups_base();
+        uint8_t* base = custom_cups_list_ptr();   // ← use the correct helper
         if (base) {
             for (int i = 0; i < 512; ++i) {
                 uint8_t* c = base + i * CUP_STRIDE;
-                const char* id = cup_id_from_struct(c);
+                const char* id = cup_id_from_ptr(c);
                 if (!id || !*id) break; // reached end
                 if (_stricmp(id, targetId) == 0) return c;
             }
@@ -451,6 +529,14 @@ static bool cup_was_won_by_profile(const std::string& cupId, const std::string& 
     return found;
 }
 
+// === UI row pointer cache: cupId -> cupStruct* (learned from hkCupFinalize) ===
+static std::unordered_map<std::string, uint8_t*> g_uiRowPtrById;
+
+static inline uint8_t* RowPtrForId(const std::string& id) {
+    auto it = g_uiRowPtrById.find(id);
+    return (it == g_uiRowPtrById.end()) ? nullptr : it->second;
+}
+
 // ======================================================
 //          API to set cup/profile from CupGenerator
 // ======================================================
@@ -510,6 +596,20 @@ static inline bool level_has_single_win(const std::string& t) {
     uint16_t f = 0; return read_level_flags(t, f) && (f & 0x0010);
 }
 
+// ======================================================
+//                    Util
+// ======================================================
+
+static std::atomic<bool> g_pendingMenuRefresh{ false };
+static std::string g_cacheForProfile;
+
+static void EnsureCacheProfileUpToDate() {
+    const std::string prof = active_profile_name();
+    if (_stricmp(prof.c_str(), g_cacheForProfile.c_str()) != 0) {
+        g_unlockCache.clear();
+        g_cacheForProfile = prof;
+    }
+}
 
 // ======================================================
 //                Cup log (CUPGEN1) helpers
@@ -539,11 +639,26 @@ static void write_cupgen_log(const char* cupId) {
 
 static inline char ci(char a) { return (a >= 'A' && a <= 'Z') ? (a + 32) : a; }
 
+// AFTER (drop-in replacement):
 static bool starts_key(const char* p, const char* key, const char** outAfterKey) {
-    int i = 0; while (key[i] && p[i] && ci(p[i]) == key[i]) ++i;
-    if (key[i] == 0 && (p[i] == 0 || p[i] == ' ' || p[i] == '\t')) { if (outAfterKey)*outAfterKey = p + i; return true; }
+    int i = 0;
+    while (key[i] && p[i] && ci(p[i]) == key[i]) ++i;
+
+    if (key[i] != 0) return false; // didn't fully match key
+
+    const char c = p[i];
+    if (c == 0 || c == ' ' || c == '\t') {
+        if (outAfterKey) *outAfterKey = p + i;
+        return true;
+    }
+    if (c == '=') {
+        // allow "ObtainCustom=3 a b c"
+        if (outAfterKey) *outAfterKey = p + i + 1; // position after '='
+        return true;
+    }
     return false;
 }
+
 
 static void parse_mode_and_args(const char* p, int& outMode, std::vector<std::string>& outArgs) {
     while (*p == ' ' || *p == '\t') ++p;
@@ -698,7 +813,7 @@ static bool eval_obtaincustom_gate(int mode, const std::vector<std::string>& arg
 
 // --- Hard cancel helper ---
 static void CancelActiveCupWithDialog(const std::string& reason) {
-    *PP_ACTIVE_CUP() = nullptr;
+    if (auto pp = PP_ACTIVE_CUP()) { *pp = nullptr; }
     g_activeCupId.clear();
     g_activeCupPath.clear();
     g_cupResolvedOnce = false;
@@ -738,6 +853,106 @@ namespace ObtainMod {
     }
 }
 
+// Returns true if the cup has an ObtainCustom line and fills mode+args.
+// Non-destructive (doesn't touch globals).
+static bool ReadObtainCustomLine(const char* cupPath, int& outMode, std::vector<std::string>& outArgs)
+{
+    outMode = 0; outArgs.clear();
+    FILE* f = std::fopen(cupPath, "rb");
+    if (!f) return false;
+
+    char line[1024];
+    bool found = false;
+
+    auto ci = [](char c) { return (c >= 'A' && c <= 'Z') ? char(c + 32) : c; };
+
+    while (std::fgets(line, sizeof(line), f)) {
+        if (char* sc = std::strchr(line, ';')) *sc = 0;
+        // trim left
+        char* p = line; while (*p == ' ' || *p == '\t') ++p;
+        if (!*p) continue;
+
+        // lowercase compare for "obtaincustom"
+        const char* k = "obtaincustom";
+        int i = 0; while (k[i] && p[i] && ci(p[i]) == k[i]) ++i;
+        if (k[i] != 0) continue; // not the key
+
+        // We've matched "obtaincustom"
+        p += i;
+        while (*p == ' ' || *p == '\t') ++p;
+        if (*p == '=') ++p;
+        while (*p == ' ' || *p == '\t') ++p;
+
+        // parse: <mode> <arg1> <arg2> ...
+        int mode = 0;
+        if (std::sscanf(p, "%d", &mode) == 1) {
+            found = true;
+            outMode = mode;
+            // skip the mode token
+            while (*p && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') ++p;
+            while (*p == ' ' || *p == '\t') ++p;
+
+            // split remaining by whitespace
+            char* ctx = nullptr;
+            char* tok = strtok_s(p, " \t\r\n", &ctx);
+            while (tok) { outArgs.emplace_back(tok); tok = strtok_s(nullptr, " \t\r\n", &ctx); }
+        }
+    }
+    std::fclose(f);
+    return found;
+}
+
+static void RefreshCupRowById_Unlocked(const std::string& cupId) {
+    if (cupId.empty()) return;
+
+    const std::string path = cups_base_dir() + "\\" + cupId + ".txt";
+
+    // NEW: prefer pointer learned from hkCupFinalize; fallback to old finder
+    uint8_t* cup = RowPtrForId(cupId);
+    if (!cup) cup = FindCupStructById(cupId.c_str());
+    if (!cup) {
+        logf("[FE] RefreshCupRowById_Unlocked(%s): cup struct not found in UI list.\n", cupId.c_str());
+        return;
+    }
+
+    int diff = 1, stages = 0;
+    ParseDiffAndStageCount(path.c_str(), diff, stages);
+
+    char* c = reinterpret_cast<char*>(cup);
+    *reinterpret_cast<int*>(c + OFF_DIFFICULTY) = diff;
+    *reinterpret_cast<int*>(c + OFF_MAXSTAGES) = stages;
+    c[OFF_LOCKBYTE] = 0; // clear locked/needs-gen hint
+
+    if (std::string nm = ParseCupNameOnly(path.c_str()); !nm.empty()) {
+        const size_t cap = 31;
+        const size_t n = (nm.size() > cap ? cap : nm.size());
+        std::memcpy(c + OFF_NAME, nm.c_str(), n);
+        std::memset(c + OFF_NAME + n, 0, 32 - n);
+        *(c + OFF_NAME + 0x1F) = 0;
+    }
+
+    if (oCupFinalize) {
+        oCupFinalize(cup); // let the game rebuild derived fields for that entry
+    }
+
+    logf("[FE] RefreshCupRowById_Unlocked(%s): row updated (diff=%d, stages=%d).\n",
+        cupId.c_str(), diff, stages);
+}
+
+static bool WaitForMenuListsReady(DWORD timeout_ms = 2500, DWORD poll_ms = 50)
+{
+    const DWORD t0 = GetTickCount();
+    while (GetTickCount() - t0 < timeout_ms) {
+        uint8_t* cust = custom_cups_list_ptr();
+        if (cust) {
+            const char* id0 = cup_id_from_ptr(cust);
+            if (id0 && *id0) return true;
+        }
+        Sleep(poll_ms);
+    }
+    return false;
+}
+
 // ======================================================
 //                   Live game access
 // ======================================================
@@ -764,7 +979,27 @@ static inline int cup_numcars() {
 }
 
 // Race-results rows as used by FUN_004604C0
-struct ResRow { uint64_t playerPtr; uint64_t info; };
+#if INTPTR_MAX == INT64_MAX
+using uptr = uint64_t;
+#define FMT_PTRHEX "%016llX"
+#define FMT_PTRARG(p) (unsigned long long)(p)
+#else
+using uptr = uint32_t;
+#define FMT_PTRHEX "%08X"
+#define FMT_PTRARG(p) (unsigned)(p)
+#endif
+
+static std::string sg_hex_name(uptr id) {
+    char buf[32];
+    _snprintf(buf, sizeof(buf), "ID_" FMT_PTRHEX, FMT_PTRARG(id));
+    return std::string(buf);
+}
+
+struct ResRow {
+    uptr playerPtr;  // pointer-sized
+    uptr info;       // pointer-sized / flags blob as seen by RVGL
+};
+
 static inline int       results_count() { return *PLAYERS_COUNT(); }
 static inline ResRow* results_rows() { return reinterpret_cast<ResRow*>(PLAYERS_BASE()); }
 
@@ -772,6 +1007,7 @@ static inline ResRow* results_rows() { return reinterpret_cast<ResRow*>(PLAYERS_
 //                   Temp championship state
 // ======================================================
 
+#pragma pack(push, 1)
 struct CupTmpState {
     char     magic[7];      // "CUPTMP1"
     uint8_t  version;       // 1
@@ -780,12 +1016,13 @@ struct CupTmpState {
     uint32_t maxStages;
     uint32_t stagePlayed;
     uint32_t numDrivers;
-    uint64_t driverIds[16];
+    uint64_t driverIds[16]; // KEEP 64-bit for stable file format
     int32_t  points[16];
     uint8_t  lastOrder[16];
     uint8_t  playerIndex;
     uint8_t  reserved[15];
 };
+#pragma pack(pop)
 
 static inline std::string temp_dir() { return logs_dir() + "\\temp"; }
 static inline std::string temp_path(const std::string& cupId, const std::string& prof) {
@@ -817,10 +1054,13 @@ static void del_tmp(const std::string& cupId, const std::string& prof) {
     std::string p = temp_path(cupId, prof); remove(p.c_str());
 }
 
-static int resolve_player_index_by_name(const std::vector<uint64_t>& ids) {
+static int resolve_player_index_by_name(const std::vector<uptr>& ids) {
     const std::string prof = active_profile_name();
     for (size_t i = 0; i < ids.size(); ++i) {
-        const char* nm = reinterpret_cast<const char*>(ids[i] + OFF_PLAYER_NAME);
+        // compute pointer using uptr to avoid truncation on x86
+        const uptr raw = ids[i];
+        if (!raw) continue;
+        const char* nm = reinterpret_cast<const char*>(raw + OFF_PLAYER_NAME);
         if (nm && _stricmp(nm, prof.c_str()) == 0) return (int)i;
     }
     return 0;
@@ -960,20 +1200,8 @@ static void EnforceDecision_PreLoad(const GateDecision& d)
         return;
     }
 
-    *PP_ACTIVE_CUP() = nullptr;
+    if (auto pp = PP_ACTIVE_CUP()) { *pp = nullptr; }
 }
-
-// ================== Hooks ==================
-
-using tStartCup = void(__fastcall*)(void*, void*, void*, void*);
-using tRaceResults = void(__fastcall*)(unsigned long long);
-using tAfterCupFinish = void(__fastcall*)(void*);
-using tCupFinalize = void(*)(void*);
-
-static tStartCup    oStartCup = nullptr;
-static tRaceResults oRaceResults = nullptr;
-static tCupFinalize oCupFinalize = nullptr;
-static tAfterCupFinish oAfterCupFinish = nullptr;
 
 // Helper: build cups\<id>.txt
 static inline std::string cup_txt_path_from_id(const char* id) {
@@ -1037,10 +1265,6 @@ static void MaybeRefreshCurrentlySelectedIfJustUnlocked()
     }
 }
 
-static void RefreshCupRowById_Unlocked(const std::string& cupId);
-
-// Enumerate cups\*.txt to prewarm/refresh the unlock cache.
-// We don’t touch the menu here (only the cache); the real-time refresh is limited to the currently selected cup.
 static void RebuildUnlockCache_AllCups()
 {
     const std::string pattern = cups_base_dir() + "\\*.txt";
@@ -1048,39 +1272,61 @@ static void RebuildUnlockCache_AllCups()
     WIN32_FIND_DATAA fd{};
     HANDLE h = FindFirstFileA(pattern.c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) {
+        logf("[FE] RebuildUnlockCache: no cups found in %s\n", cups_base_dir().c_str());
         return;
     }
+
+    int changed = 0; // how many flipped locked->unlocked
+
     do {
-        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-            std::string fn = fd.cFileName;
-            // strip ".txt" to get id
-            if (fn.size() > 4 && _stricmp(fn.substr(fn.size() - 4).c_str(), ".txt") == 0) {
-                std::string id = fn.substr(0, fn.size() - 4);
-                std::string path = cups_base_dir() + "\\" + fn;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            continue;
 
-                bool unlocked = IsCupUnlockedNow(id, path);
+        std::string fn = fd.cFileName;
+        // strip ".txt" to get id
+        if (fn.size() <= 4 || _stricmp(fn.substr(fn.size() - 4).c_str(), ".txt") != 0)
+            continue;
 
-                // detect transition: locked -> unlocked
-                auto it = g_unlockCache.find(id);
-                bool wasUnlocked = (it != g_unlockCache.end()) ? it->second : false;
+        const std::string id = fn.substr(0, fn.size() - 4);
+        const std::string path = cups_base_dir() + "\\" + fn;
 
-                if (!wasUnlocked && unlocked) {
-                    RefreshCupRowById_Unlocked(id);   // <-- the missing action
-                }
+        const bool unlockedNow = IsCupUnlockedNow(id, path);
+        const auto  it = g_unlockCache.find(id);
+        const bool  wasUnlocked = (it != g_unlockCache.end()) ? it->second : false;
 
-                g_unlockCache[id] = unlocked;
-            }
+        if (!wasUnlocked && unlockedNow) {
+            // Row-level refresh (no selection bounce here)
+            logf("[FE] RebuildUnlockCache: %s flipped to unlocked – refreshing row.\n", id.c_str());
+            RefreshCupRowById_Unlocked(id);
+            ++changed;
         }
+
+        // keep cache coherent
+        g_unlockCache[id] = unlockedNow;
+
     } while (FindNextFileA(h, &fd));
     FindClose(h);
 
+    if (changed > 0) {
+        logf("[FE] RebuildUnlockCache: %d cups unlocked this pass. Forcing one repaint bounce.\n", changed);
+        ForceMenuRedrawBySelectionBounce(); // single repaint for the batch
+    }
+    else {
+        logf("[FE] RebuildUnlockCache: no changes.\n");
+    }
 }
 
 static HANDLE g_timerQ = nullptr;
 
 static VOID CALLBACK DelayedRescanCB(PVOID, BOOLEAN) {
-    // One more pass after RVGL likely flushed .level files
-    RebuildUnlockCache_AllCups();
+    RebuildUnlockCache_AllCups(); // file I/O only
+    g_pendingMenuRefresh.store(true, std::memory_order_release);
+}
+
+static void ApplyPendingMenuRefreshOnMainThread() {
+    if (!g_pendingMenuRefresh.exchange(false, std::memory_order_acq_rel))
+        return;
+    EnsureCacheProfileUpToDate();
     MaybeRefreshCurrentlySelectedIfJustUnlocked();
 }
 
@@ -1091,32 +1337,41 @@ static void QueueDelayedRescan(DWORD delay_ms = 600) {
     CreateTimerQueueTimer(&t, g_timerQ, DelayedRescanCB, nullptr, delay_ms, 0, WT_EXECUTEDEFAULT);
 }
 
-// --- CANCEL BY MAKING THE CUP INERT AND RETURNING ---
-static void MakeCupInertAndReturn(void* cup /* param_1 */) {
-    char* c = reinterpret_cast<char*>(cup);
+// ================== Hooks ==================
 
-    // 1) No stages => unplayable
-    *reinterpret_cast<int*>(c + OFF_MAXSTAGES) = 0;     // 0x78
-
-    // 2) Zero cars (belt & suspenders)
-    *reinterpret_cast<int*>(c + OFF_NUMCARS) = 0;     // 0x68
-
-    // 3) Clear stage table (STAGE entries live at 0x94 .. 0x94+0xC*16)
-    std::memset(c + 0x94, 0, 0x0C * 16);
-
-    // 4) Zero points array (optional)
-    std::memset(c + OFF_POINTS, 0, 4 * 16);             // 0x154
-
-    // 5) If you want, force the loader "ready" byte off (from your Ghidra dump)
-    //    This is optional; 1 often means "needs generation/locked".
-    // c[0x195] = 1;
-
-}
-
-// ---- StartCup: single source of truth ----
+// ---- StartCup hook ----
+#if defined(_M_X64)
 static void __fastcall hkStartCup(void* rcx, void* rdx, void* r8, void* r9)
 {
+    // --- NEW: drop any stale latch from a previous cup ---
+    g_activeCupId.clear();
+    g_activeCupPath.clear();
+    g_cupResolvedOnce = false;
 
+    g_hasObtainCustom = false;
+    g_activeObtainCustom = 0;
+    g_obtainCustomArgs.clear();
+
+    GateDecision d = DecideGateFromSelection();
+    if (!d.allow) {
+        std::string text = BuildObtainCustomDialogText(d.path.c_str());
+        MessageBoxA(nullptr, text.c_str(), "Cup locked",
+            MB_OK | MB_ICONWARNING | MB_SETFOREGROUND | MB_TASKMODAL);
+
+        EnforceDecision_PreLoad(d);
+        ApplyPendingMenuRefreshOnMainThread();
+        return;
+    }
+
+    EnforceDecision_PreLoad(d);
+    ApplyPendingMenuRefreshOnMainThread();
+
+    if (oStartCup) oStartCup(rcx, rdx, r8, r9);
+}
+#else
+// x86: grab 'this' in ecx. __fastcall gives us (ecx=this, edx=unused)
+static void __fastcall hkStartCup(void* thisptr, void* /*edx*/)
+{
     // --- NEW: drop any stale latch from a previous cup ---
     g_activeCupId.clear();
     g_activeCupPath.clear();
@@ -1141,9 +1396,9 @@ static void __fastcall hkStartCup(void* rcx, void* rdx, void* r8, void* r9)
     // Latch cup id/path now to normalize ordering for Opponents/StartGrid.
     EnforceDecision_PreLoad(d);
 
-    // Proceed
-    if (oStartCup) oStartCup(rcx, rdx, r8, r9);
+    if (oStartCup) oStartCup(thisptr);   // << only 'this'
 }
+#endif
 
 // Our hook for FUN_00448500
 static void __fastcall hkCupFinalize(void* cupStruct)
@@ -1151,12 +1406,19 @@ static void __fastcall hkCupFinalize(void* cupStruct)
     const char* cid = cupStruct
         ? reinterpret_cast<const char*>(reinterpret_cast<uint8_t*>(cupStruct) + OFF_CUP_ID)
         : nullptr;
+
+    // --- NEW: remember the UI row pointer for this id so we can repaint in-place later ---
+    if (cid && *cid) {
+        g_uiRowPtrById[std::string(cid)] = reinterpret_cast<uint8_t*>(cupStruct);
+        // logf("[FE] Row seen: id=%s ptr=%p\n", cid, cupStruct); // optional
+    }
+    // ------------------------------------------------------------------------------
+
     const std::string path = cup_txt_path_from_id(cid);
 
     if (!path.empty()) {
         // Evaluate gate silently; if FAIL => populate selector fields, then return.
         if (!ObtainMod::GateCupFileNow(path.c_str(), cid ? cid : "", /*showDialog*/false)) {
-            // << changed here >>
             MiniParseForMenu(cupStruct, path.c_str());  // fill NAME/DIFF/CARS/POINTS/STAGES for selector
             return;                                     // do NOT call original
         }
@@ -1168,22 +1430,18 @@ static void __fastcall hkCupFinalize(void* cupStruct)
 
 // -------- StartGrid logging helpers (file-scope) --------
 
-// Stable placeholder name when we don't have a readable player name
-static std::string sg_hex_name(uint64_t id) {
-    char buf[32];
-    _snprintf(buf, sizeof(buf), "ID_%016llX", (unsigned long long)id);
-    return std::string(buf);
-}
-
 // Track name if you have a resolver; otherwise "Unknown"
 static const char* sg_track_name() {
     // If you have something like get_current_track_name(), call it here.
     return "Unknown";
 }
 
-// -- per-race results: accumulate points and unlock on series end --
-static void __fastcall hkRaceResults(unsigned long long sink) {
+// ---- RaceResults hook ----
+#if defined(_M_X64)
+static void __fastcall hkRaceResults(unsigned long long sink)
+{
     if (oRaceResults) oRaceResults(sink);
+
 
     // Prefer latched id, then engine's id as a fallback
     const char* activeCid = active_cup_id();
@@ -1217,7 +1475,7 @@ static void __fastcall hkRaceResults(unsigned long long sink) {
     const int currentRaceIndex = (int)s.stagePlayed;
 
     // Finishing order from results rows (ids[i] is place i+1)
-    std::vector<uint64_t> ids;
+    std::vector<uptr> ids;
     {
         int n = results_count(); ResRow* rows = results_rows();
         for (int i = 0; i < n; i++) {
@@ -1234,28 +1492,29 @@ static void __fastcall hkRaceResults(unsigned long long sink) {
 
     // Initialize roster on first race
     if (s.stagePlayed == 0 && s.driverIds[0] == 0) {
-        for (int i = 0; i < num; i++) s.driverIds[i] = ids[i];
+        for (int i = 0; i < num; i++) {
+            // driverIds[] is uint64_t (file format stable); cast explicitly
+            s.driverIds[i] = static_cast<uint64_t>(ids[i]);
+        }
         s.playerIndex = (uint8_t)resolve_player_index_by_name(ids);
     }
 
     int slotOf[16]; for (int i = 0; i < 16; i++) slotOf[i] = -1;
-    for (int i = 0; i < num; i++) {
-        uint64_t id = ids[i]; int slot = -1;
-        for (int k = 0; k < num; k++) if (s.driverIds[k] == id) { slot = k; break; }
-        if (slot == -1) {
-            for (int k = 0; k < num; k++) if (s.driverIds[k] == 0) { s.driverIds[k] = id; slot = k; break; }
+    // award points & remember last finishing order (1..16, 0 means unknown)
+    for (int place = 0; place < num; ++place) {
+        uptr id = ids[place];
+        // find roster slot for this finisher
+        int slot = -1;
+        for (int k = 0; k < num; ++k) {
+            if (static_cast<uptr>(s.driverIds[k]) == id) { slot = k; break; }
         }
-        if (slot != -1) slotOf[slot] = i;
-    }
+        if (slot < 0) continue;
 
-    for (int slot = 0; slot < num; ++slot) {
-        int place = slotOf[slot];
-        if (place >= 0) {
-            int pts = cup_points_at(place);
-            s.points[slot] += pts;
-            s.lastOrder[slot] = (uint8_t)(place + 1); // 1 is best
-        }
+        const int pts = cup_points_at(place);    // 0-based place → game’s points array
+        s.points[slot] += pts;
+        s.lastOrder[slot] = static_cast<uint8_t>(place + 1);
     }
+    save_tmp(s);
 
     // === StartGrid: emit a minimal CSV block into race_log.txt (parsable by StartGrid) ===
     {
@@ -1333,6 +1592,7 @@ static void __fastcall hkRaceResults(unsigned long long sink) {
     const int unlockPos = parse_unlockpos_from_cupfile(cid);
     if (finalRank > 0 && finalRank <= unlockPos) {
         write_win_for_profile(cid, active_profile_name());  // NEW
+        del_tmp(cid, prof);
         QueueDelayedRescan(700);
         RebuildUnlockCache_AllCups();
         MaybeRefreshCurrentlySelectedIfJustUnlocked();
@@ -1345,47 +1605,216 @@ static void __fastcall hkRaceResults(unsigned long long sink) {
         return;
     }
 }
+#else
+static void __cdecl hkRaceResults()
+{
+    if (oRaceResults) oRaceResults();    // << no args on x86
+    // Prefer latched id, then engine's id as a fallback
+    const char* activeCid = active_cup_id();
+    const char* latched = g_activeCupId.empty() ? nullptr : g_activeCupId.c_str();
+    const char* cid = latched ? latched : activeCid;
 
-// Optional after-finish (not used yet)
-static void __fastcall hkAfterCupFinish(void* ctx) {
-    if (oAfterCupFinish) oAfterCupFinish(ctx);
-}
+    QueueDelayedRescan(700);  // ~0.7s later; tweak if needed
+    RebuildUnlockCache_AllCups();
+    MaybeRefreshCurrentlySelectedIfJustUnlocked();
 
-// Update the menu row for a given cup id: write real fields, clear lock, run finalize, bounce redraw.
-static void RefreshCupRowById_Unlocked(const std::string& cupId) {
-    if (cupId.empty()) return;
+    if (!cid || !*cid)
+        return;
 
-    const std::string path = cups_base_dir() + "\\" + cupId + ".txt";
-    uint8_t* cup = FindCupStructById(cupId.c_str());
-    if (!cup) {
+    const std::string prof = active_profile_name();
+    CupTmpState s{};
+    if (!load_tmp(cid, prof, s)) {
+        std::memcpy(s.magic, "CUPTMP1", 7); s.version = 1;
+        std::strncpy(s.cupId, cid, 63); s.cupId[63] = 0;
+        std::strncpy(s.profile, prof.c_str(), 63); s.profile[63] = 0;
+        s.maxStages = (uint32_t)std::max(cup_max_stages(), 0);
+        s.stagePlayed = 0;
+        s.numDrivers = (uint32_t)std::clamp(cup_numcars(), 1, 16);
+        std::memset(s.driverIds, 0, sizeof(s.driverIds));
+        std::memset(s.points, 0, sizeof(s.points));
+        std::memset(s.lastOrder, 0, sizeof(s.lastOrder));
+        s.playerIndex = 0xFF;
+        save_tmp(s);
+    }
+
+    // Current race index (0-based) is the stage that's just been finished BEFORE we increment it
+    const int currentRaceIndex = (int)s.stagePlayed;
+
+    // Finishing order from results rows (ids[i] is place i+1)
+    std::vector<uptr> ids;
+    {
+        int n = results_count(); ResRow* rows = results_rows();
+        for (int i = 0; i < n; i++) {
+            if (rows[i].info != 0) ids.push_back(rows[i].playerPtr);
+        }
+    }
+
+    if (ids.empty()) {
+        save_tmp(s);
         return;
     }
 
-    int diff = 1, stages = 0;
-    ParseDiffAndStageCount(path.c_str(), diff, stages);
+    const int num = (int)std::min<size_t>(ids.size(), s.numDrivers);
 
-    char* c = reinterpret_cast<char*>(cup);
-    *reinterpret_cast<int*>(c + OFF_DIFFICULTY) = diff;
-    *reinterpret_cast<int*>(c + OFF_MAXSTAGES) = stages;
-    c[OFF_LOCKBYTE] = 0; // clear "locked/needs-gen" hint
-
-    // Optional: also refresh the name (nice polish)
-    std::string nm = ParseCupNameOnly(path.c_str());
-    if (!nm.empty()) {
-        const size_t cap = 31;
-        size_t n = (nm.size() > cap ? cap : nm.size());
-        std::memcpy(c + OFF_NAME, nm.c_str(), n);
-        std::memset(c + OFF_NAME + n, 0, 32 - n);
-        *(c + OFF_NAME + 0x1F) = 0;
+    // Initialize roster on first race
+    if (s.stagePlayed == 0 && s.driverIds[0] == 0) {
+        for (int i = 0; i < num; i++) {
+            // driverIds[] is uint64_t (file format stable); cast explicitly
+            s.driverIds[i] = static_cast<uint64_t>(ids[i]);
+        }
+        s.playerIndex = (uint8_t)resolve_player_index_by_name(ids);
     }
 
-    if (oCupFinalize) {
-        oCupFinalize(cup); // let the game rebuild any derived fields for that entry
+    int slotOf[16]; for (int i = 0; i < 16; i++) slotOf[i] = -1;
+    // award points & remember last finishing order (1..16, 0 means unknown)
+    for (int place = 0; place < num; ++place) {
+        uptr id = ids[place];
+        // find roster slot for this finisher
+        int slot = -1;
+        for (int k = 0; k < num; ++k) {
+            if (static_cast<uptr>(s.driverIds[k]) == id) { slot = k; break; }
+        }
+        if (slot < 0) continue;
+
+        const int pts = cup_points_at(place);    // 0-based place → game’s points array
+        s.points[slot] += pts;
+        s.lastOrder[slot] = static_cast<uint8_t>(place + 1);
+    }
+    save_tmp(s);
+
+    // === StartGrid: emit a minimal CSV block into race_log.txt (parsable by StartGrid) ===
+    {
+        const char* trackName = sg_track_name();
+        for (int i = 0; i < num; ++i) {
+            // We don't have a reliable readable name yet, so use a stable hex label.
+            const std::string disp = sg_hex_name(ids[i]);
+        }
     }
 
-    // Bounce selection to force immediate repaint (covers cases where the UI caches row visuals)
-    ForceMenuRedrawBySelectionBounce();
+    // Advance stage counter
+    if (s.stagePlayed < s.maxStages) s.stagePlayed++;
+    const bool finished = (s.stagePlayed >= s.maxStages && s.maxStages > 0);
 
+    if (!finished) {
+        save_tmp(s);
+        // NEW: per-race refresh – may flip mode 2/3/4 requirements on .level files.
+        QueueDelayedRescan(700);  // ~0.7s later; tweak if needed
+        RebuildUnlockCache_AllCups();
+        MaybeRefreshCurrentlySelectedIfJustUnlocked();
+        return;
+    }
+
+    // Final rank with tie-break: last race better place wins
+    const int pSlot = (s.playerIndex <= 15) ? (int)s.playerIndex : 0;
+    const int pPts = s.points[pSlot];
+    const int pLast = s.lastOrder[pSlot] ? s.lastOrder[pSlot] : 255;
+    int betterCount = 0;
+    for (int k = 0; k < num; k++) if (k != pSlot) {
+        if (s.points[k] > pPts) betterCount++;
+        else if (s.points[k] == pPts) {
+            int theirLast = s.lastOrder[k] ? s.lastOrder[k] : 255;
+            if (theirLast < pLast) betterCount++;
+        }
+    }
+    const int finalRank = betterCount + 1;
+
+    // UnlockPos from cup file (launcher-aware, prefers the exact active path)
+    auto parse_unlockpos_from_cupfile = [](const char* id) -> int {
+        char path[MAX_PATH];
+
+        // If we know the exact file path for this cup, use it.
+        if (id && *id && !g_activeCupPath.empty() && _stricmp(id, g_activeCupId.c_str()) == 0) {
+            std::strncpy(path, g_activeCupPath.c_str(), MAX_PATH - 1);
+            path[MAX_PATH - 1] = 0;
+        }
+        else {
+            // Otherwise build from the resolved cups base dir.
+            _snprintf(path, MAX_PATH, "%s\\%s.txt", cups_base_dir().c_str(), (id && *id) ? id : "");
+        }
+
+        FILE* f = std::fopen(path, "rb");
+        if (!f)
+            return 1;
+
+        char line[512];
+        int  val = 1;
+
+        while (std::fgets(line, sizeof(line), f)) {
+            if (char* sc = std::strchr(line, ';')) *sc = 0;           // strip ; comment
+            // Try "UnlockPos 2" and tolerate "UnlockPos=2"
+            char key[32]; int v;
+            if (std::sscanf(line, " %31[^= \t] = %d", key, &v) == 2 ||
+                std::sscanf(line, " %31s %d", key, &v) == 2) {
+                // tolower(key)
+                for (char* p = key; *p; ++p) if (*p >= 'A' && *p <= 'Z') *p += 32;
+                if (std::strcmp(key, "unlockpos") == 0) { val = v; break; }
+            }
+        }
+
+        std::fclose(f);
+        return val;
+        };
+
+    const int unlockPos = parse_unlockpos_from_cupfile(cid);
+    if (finalRank > 0 && finalRank <= unlockPos) {
+        write_win_for_profile(cid, active_profile_name());  // NEW
+        del_tmp(cid, prof);
+        QueueDelayedRescan(700);
+        RebuildUnlockCache_AllCups();
+        MaybeRefreshCurrentlySelectedIfJustUnlocked();
+    }
+    else {
+        save_tmp(s);
+        QueueDelayedRescan(700);  // ~0.7s later; tweak if needed
+        RebuildUnlockCache_AllCups();
+        MaybeRefreshCurrentlySelectedIfJustUnlocked();
+        return;
+    }
+}
+#endif
+
+
+
+// Small helper to log last-error with a label
+static void log_last_error(const char* tag, DWORD err) {
+    if (!err) err = GetLastError();
+    logf("[FE] %s: GetLastError=%lu (0x%08lX)\n", tag, (unsigned long)err, (unsigned long)err);
+}
+
+static void hkFrontendInit() {
+    logf("[FE] FrontendInit hook ENTER (abs=%p, orig=%p)\n",
+        (void*)ABS_FN_FRONTEND_INIT(), (void*)oFrontendInit);
+
+    // The list is about to rebuild; drop stale row pointers we learned earlier.
+    g_uiRowPtrById.clear();
+
+    // Run the game's init first so FE lists/selection are rebuilt normally.
+    if (oFrontendInit) {
+        oFrontendInit();
+        logf("[FE] FrontendInit original returned.\n");
+    }
+    else {
+        logf("[FE] WARNING: oFrontendInit is null; continuing worker anyway.\n");
+    }
+
+    // Keep cache keyed to the active profile on disk.
+    logf("[FE/worker] Start. profile='%s'\n", active_profile_name().c_str());
+    EnsureCacheProfileUpToDate();
+
+    // FE just rebuilt the lists; wait once until the custom list has its first valid id.
+    // (Prevents touching menu memory too early.)
+    WaitForMenuListsReady(/*timeout_ms=*/2500, /*poll_ms=*/50);
+
+    // Do the same immediate maintenance you do after RaceResults:
+    //  1) Rebuild the unlock cache from disk (.level flags, ObtainCustom, etc.)
+    //  2) If the currently selected cup just flipped → finalize its row so UI reflects it.
+    RebuildUnlockCache_AllCups();
+    MaybeRefreshCurrentlySelectedIfJustUnlocked();
+
+    // Optional: also schedule a slightly delayed pass (matches your race hook pattern)
+    // in case FE continues lazy-loading or writing .level flags shortly after.
+    QueueDelayedRescan(700);
+    ApplyPendingMenuRefreshOnMainThread(); // harmless if nothing pending
 }
 
 // ======================================================
@@ -1406,6 +1835,10 @@ namespace ObtainMod {
         const uintptr_t finAbs = AbsFromMaybeRva(g_addrs.rva_CupFinalize);
         if (finAbs)
             ok &= HookFunction(finAbs, (LPVOID)&hkCupFinalize, (LPVOID*)&oCupFinalize);
+
+        const uintptr_t feAbs = AbsFromMaybeRva(g_addrs.rva_FrontendInit); // new
+        if (feAbs)
+            ok &= HookFunction(feAbs, (LPVOID)&hkFrontendInit, (LPVOID*)&oFrontendInit);
 
         return ok;
     }
@@ -1454,7 +1887,7 @@ namespace ObtainMod {
         std::string path = cups_base_dir() + "\\" + std::string(aid) + ".txt";
         FILE* f = std::fopen(path.c_str(), "rb");
         if (!f) {
-            *PP_ACTIVE_CUP() = nullptr;
+            if (auto pp = PP_ACTIVE_CUP()) { *pp = nullptr; }
             g_activeCupId.clear();
             g_activeCupPath.clear();
             g_cupResolvedOnce = false;
@@ -1468,7 +1901,7 @@ namespace ObtainMod {
         if (g_hasObtainCustom) {
             std::string reason;
             if (!eval_obtaincustom_gate(g_activeObtainCustom, g_obtainCustomArgs, &reason)) {
-                *PP_ACTIVE_CUP() = nullptr;
+                if (auto pp = PP_ACTIVE_CUP()) { *pp = nullptr; }
                 g_activeCupId.clear();
                 g_activeCupPath.clear();
                 g_cupResolvedOnce = false;

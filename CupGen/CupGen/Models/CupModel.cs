@@ -218,8 +218,11 @@ namespace CupGenerator.Models
             QualifyPos = other.QualifyPos;
             UnlockPos = other.UnlockPos;
 
-            // NEW: carry over RandomCars + JokerLine
             RandomCars = other.RandomCars;
+            RandomCarsStock = other.RandomCarsStock;
+            RandomCarsMain = other.RandomCarsMain;
+            RandomCarsBonus = other.RandomCarsBonus;
+
             JokerLine = other.JokerLine;
 
             Points = other.Points != null ? new List<int>(other.Points) : new List<int>();

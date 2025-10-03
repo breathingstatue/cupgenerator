@@ -45,15 +45,24 @@ namespace CupGen.UI
                 var sig = Services.RvglSigInterop.EnsureOnDiskSignatures(_rvglRoot);
                 Status = sig.message;
                 Debug.WriteLine(sig.message);
-                Status = sig.message;
-                Debug.WriteLine(sig.message);
             }
         }
 
         private string _rvglRoot = "";
 
-        public CarItem SelectedCarItem { get; set; }
-        public TrackItem SelectedTrackItem { get; set; }
+        private CarItem _selectedCarItem;
+        public CarItem SelectedCarItem
+        {
+            get => _selectedCarItem;
+            set { if (_selectedCarItem == value) return; _selectedCarItem = value; OnPropertyChanged(); }
+        }
+
+        private TrackItem _selectedTrackItem;
+        public TrackItem SelectedTrackItem
+        {
+            get => _selectedTrackItem;
+            set { if (_selectedTrackItem == value) return; _selectedTrackItem = value; OnPropertyChanged(); }
+        }
 
         private CupRef _selectedCupListItem;
         public CupRef SelectedCupListItem
@@ -378,29 +387,16 @@ namespace CupGen.UI
                 var cup = Services.CupFileIO.Load(cr.FullPath);
                 Cup.CopyFrom(cup);
 
-                // NEW: sync UI-level fields from the loaded model so UpdatePreview won’t wipe them
-                ObtainCustomMode = Cup.ObtainCustomMode;
-                ObtainCustomArgsRaw = Cup.ObtainCustomArgsRaw;
+                // IMPORTANT: rewire CollectionChanged to the (possibly) new collection
+                HookStagesCollection(Cup.Stages);
 
+                // (optional, you already do per-stage PropertyChanged subscription)
                 foreach (var st in Cup.Stages)
                     st.PropertyChanged += (_, __) => UpdatePreview();
 
-                StagesDisplay.Clear();
-                for (int i = 0; i < Cup.Stages.Count; i++)
-                {
-                    var s = Cup.Stages[i];
-                    StagesDisplay.Add($"{i:D2}  {s.TrackKey}  {s.Laps}  {s.Mirrored}  {s.Reversed}");
-                }
-
-                OnPropertyChanged(nameof(Cup));
-                OnPropertyChanged(nameof(PointsCsv));
-
-                // Keep Randomizer in sync with what's loaded
-                SyncRandomizerFromCup();    // <-- NEW
-
-                UpdatePreview();
-                Status = $"Loaded: {cr.Display ?? cr.Id}";
+                RebuildStagesDisplay();
             }
+
             catch (Exception ex)
             {
                 Status = "Load error: " + ex.Message;
@@ -737,20 +733,7 @@ namespace CupGen.UI
             // Rebuild when Opponents list changes
             Cup.Opponents.CollectionChanged += (_, __) => UpdatePreview();
 
-            // Rebuild when Stages list changes, and also watch each Stage item for property edits
-            Cup.Stages.CollectionChanged += (s, e) =>
-            {
-                if (e.NewItems != null)
-                    foreach (CupModel.Stage st in e.NewItems)
-                        st.PropertyChanged += Stage_PropertyChanged;
-
-                if (e.OldItems != null)
-                    foreach (CupModel.Stage st in e.OldItems)
-                        st.PropertyChanged -= Stage_PropertyChanged;
-
-                RebuildStagesDisplay();  // reflect add/remove immediately
-                UpdatePreview();
-            };
+            HookStagesCollection(Cup.Stages);
 
             // also attach for already-existing stages (e.g., after Load)
             foreach (var st in Cup.Stages)

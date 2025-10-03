@@ -1,0 +1,9 @@
+﻿  RvglSigHelper.cpp
+  signatures_helper.cpp
+     Creating library C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\bin\Release\RvglSigHelper.lib and object C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\bin\Release\RvglSigHelper.exp
+  Generating code
+  20 of 531 functions ( 3.8%) were compiled, the rest were copied from previous compilation.
+    14 functions were new in current compilation
+    6 functions had inline decision re-evaluated but remain unchanged
+  Finished generating code
+  RvglSigHelper.vcxproj -> C:\Users\ilari\source\repos\CupGen\CupGen\CupGen\bin\Release\RvglSigHelper.dll

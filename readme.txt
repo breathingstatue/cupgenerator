@@ -1,3 +1,7 @@
+CupGenerator v.1.4
+Car Tooltip carbox preview works on box.bmp as well
+Updated handling of car packs and track packs (by Rod aka HansyRod)
+
 CupGenerator v.1.3
 Added missing parts of Random Cars function to the UI's cup load
 32-bit version support
@@ -56,5 +60,6 @@ you can use Joker together with RandomCars parameter
 
 =======================================================================
 
-- by Theman
-1st of September 2025
+- by Theman aka breathingstatue
+
+23th of January 2026

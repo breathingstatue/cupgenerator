@@ -88,8 +88,7 @@ namespace CupGen.UI.Services
         {
             // 1) INF ‘NAME’ if it isn’t just the folder key
             var fromInf = ReadTrackDisplayName(trackDir);
-            if (!string.IsNullOrWhiteSpace(fromInf) &&
-                !fromInf.Equals(key, StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrWhiteSpace(fromInf))
                 return fromInf;
 
             // 2) strings files in packs
@@ -399,23 +398,36 @@ namespace CupGen.UI.Services
             if (string.IsNullOrWhiteSpace(rvglRoot) || !Directory.Exists(rvglRoot))
                 return Enumerable.Empty<TrackItem>();
 
-            // Each tuple is (relative levels dir, Category label for your UI filter)
-            var candidates = new (string relLevels, string category)[]
+            List<string> trackDirs = new List<string>();
+            trackDirs.Add(Path.Combine(rvglRoot, "levels"));
+
+            foreach (var d in Directory.EnumerateDirectories(Path.Combine(rvglRoot, "packs")))
             {
-        (Path.Combine("packs","game_files","levels"),      "Stock"),
-        (Path.Combine("packs","rvgl_dcpack","levels"),     "Stock"),  // <— NEW
-        (Path.Combine("packs","io_tracks","levels"),       "Main"),
-        (Path.Combine("packs","io_tracks_bonus","levels"), "Bonus"),
-        ("levels",                                         "Stock"),  // legacy
-            };
+                List<string> blacklist = ["io_lms", "io_tag"];
+                var currentFolder = Path.GetFileName(d);
+
+                if (!Directory.Exists(d) || blacklist.Contains(currentFolder))
+                {
+                    continue;
+                }
+
+                var tracksPath = Path.Combine(d, "levels");
+
+                if (Directory.Exists(tracksPath))
+                {
+                    trackDirs.Add(tracksPath);
+                }
+            }
 
             var items = new List<TrackItem>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var (rel, cat) in candidates)
+            foreach (var levelsDir in trackDirs)
             {
-                var levelsDir = Path.Combine(rvglRoot, rel);
                 if (!Directory.Exists(levelsDir)) continue;
+                
+                var cat = Categorize(levelsDir);
+                var parentFolder = Directory.GetParent(levelsDir).Name;
 
                 // Each subdirectory under .../levels is a track id (e.g., "muse2").
                 foreach (var trackDir in Directory.EnumerateDirectories(levelsDir))
@@ -436,7 +448,8 @@ namespace CupGen.UI.Services
                         FolderKey = key,   // "felling_yard"
                         Display = display,
                         Category = cat,
-                        FullPath = trackDir
+                        FullPath = trackDir,
+                        ParentFolder = parentFolder,
                     });
                 }
             }
@@ -460,7 +473,10 @@ namespace CupGen.UI.Services
             if (p.Contains("\\packs\\game_files\\")) return "Stock";
             if (p.Contains("\\packs\\rvgl_dcpack\\")) return "Stock";   // <— NEW
             if (p.Contains("io_cars_bonus")) return "Bonus";
+            if (p.Contains("io_tracks_bonus")) return "Bonus";
             if (p.Contains("io_cars")) return "Main";
+            if (p.Contains("io_tracks")) return "Main";
+            if (!p.Contains("packs")) return "Stock";
             return "Other";
         }
 

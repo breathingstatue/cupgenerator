@@ -6,5 +6,6 @@
         public string FolderKey { get; set; }
         public string Category { get; set; }
         public string FullPath { get; set; }
+        public string ParentFolder { get; set; }
     }
 }

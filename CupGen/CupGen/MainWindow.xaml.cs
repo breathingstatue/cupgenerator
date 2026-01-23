@@ -773,7 +773,8 @@ namespace CupGen.UI
 
                 var name = t.Display ?? t.FolderKey ?? "";
                 var key = t.FolderKey ?? "";
-                return ContainsAllTokens(name + " " + key, SearchText);
+                var parentFolder = t.ParentFolder ?? "";
+                return ContainsAllTokens(name + " " + key + " " + parentFolder, SearchText);
             };
 
             // Cups

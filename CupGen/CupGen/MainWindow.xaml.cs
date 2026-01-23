@@ -759,7 +759,8 @@ namespace CupGen.UI
 
                 var name = c.Display ?? "";
                 var key = c.FolderKey ?? "";
-                return ContainsAllTokens(name + " " + key, SearchText);
+                var parentFolder = c.ParentFolder ?? "";
+                return ContainsAllTokens(name + " " + key + " " + parentFolder, SearchText);
             };
 
             // Tracks

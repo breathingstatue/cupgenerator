@@ -244,14 +244,28 @@ namespace CupGen.UI.Services
 
         public static IEnumerable<CarItem> ScanCars(string root)
         {
-            foreach (var dir in FindDirs(root, new[]
+            List<string> carDirs = new List<string>();
+            carDirs.Add(Path.Combine(root, "cars"));
+
+            foreach (var d in Directory.EnumerateDirectories(Path.Combine(root, "packs")))
             {
-        Path.Combine("cars"),
-        Path.Combine("packs","game_files","cars"),
-        Path.Combine("packs","io_cars","cars"),
-        Path.Combine("packs","io_cars_bonus","cars"),
-        Path.Combine("packs","rvgl_dcpack","cars"),      // <— NEW
-    }))
+                List<string> blacklist = ["io_skins"];
+                var currentFolder = Path.GetFileName(d);
+
+                if (!Directory.Exists(d) || blacklist.Contains(currentFolder))
+                {
+                    continue;
+                }
+
+                var carsPath = Path.Combine(d, "cars");
+
+                if (Directory.Exists(carsPath))
+                {
+                    carDirs.Add(carsPath);
+                }
+            }
+
+            foreach (var dir in carDirs)
             {
                 if (!Directory.Exists(dir))
                     continue;
@@ -260,6 +274,7 @@ namespace CupGen.UI.Services
                 {
                     var key = Path.GetFileName(d);               // folder name
                     var cat = Categorize(d);
+                    var parentFolder = Directory.GetParent(dir).Name;
 
                     // Filter: skip certain stock cars (if you maintain this list)
                     if (cat.Equals("Stock", StringComparison.OrdinalIgnoreCase) &&
@@ -281,7 +296,8 @@ namespace CupGen.UI.Services
                         FolderKey = key,
                         Category = cat,
                         FullPath = d,
-                        Rating = rating
+                        Rating = rating,
+                        ParentFolder = parentFolder,
                     };
                 }
             }
@@ -443,8 +459,9 @@ namespace CupGen.UI.Services
             var p = path.Replace('/', '\\').ToLowerInvariant();
             if (p.Contains("\\packs\\game_files\\")) return "Stock";
             if (p.Contains("\\packs\\rvgl_dcpack\\")) return "Stock";   // <— NEW
-            if (p.Contains("bonus")) return "Bonus";
-            return "Main";
+            if (p.Contains("io_cars_bonus")) return "Bonus";
+            if (p.Contains("io_cars")) return "Main";
+            return "Other";
         }
 
         private static string ReadPrettyNameFromParameters(string dir)

@@ -254,6 +254,7 @@
                             <ComboBoxItem Content="Stock"/>
                             <ComboBoxItem Content="Main"/>
                             <ComboBoxItem Content="Bonus"/>
+                            <ComboBoxItem Content="Other"/>
                         </ComboBox>
                     </StackPanel>
 
@@ -333,11 +334,17 @@
 
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
-                                    <StackPanel>
-                                        <TextBlock Text="{Binding Display}" FontWeight="SemiBold"/>
-                                        <TextBlock Text="{Binding FolderKey}" Foreground="Gray" FontSize="11"/>
-                                        <TextBlock Text="{Binding Category}"  Foreground="Gray" FontSize="11"/>
-                                        <TextBlock Text="{Binding RatingName, StringFormat=Rating: {0}}" Foreground="Gray" FontSize="11"/>
+                                    <StackPanel Orientation="Horizontal">
+                                        <StackPanel Width="170">
+                                            <TextBlock Text="{Binding Display}" FontWeight="SemiBold"/>
+                                            <TextBlock Text="{Binding FolderKey}" Foreground="Gray" FontSize="11"/>
+                                            <TextBlock Text="{Binding Category}"  Foreground="Gray" FontSize="11"/>
+                                        </StackPanel>
+                                        <StackPanel>
+                                            <TextBlock Text="" />
+                                            <TextBlock Text="{Binding RatingName, StringFormat=Rating: {0}}" Foreground="Gray" FontSize="11"/>
+                                            <TextBlock Text="{Binding ParentFolder, StringFormat=Folder: {0}}" Foreground="Gray" FontSize="11"/>
+                                        </StackPanel>
                                     </StackPanel>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>

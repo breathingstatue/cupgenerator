@@ -260,21 +260,34 @@ namespace CupGen.UI.Converters
         private static Image TryPerCarCarbox(string carDir)
         {
             if (string.IsNullOrWhiteSpace(carDir)) return null;
-            var path = Path.Combine(carDir, "carbox.bmp");
-            if (!File.Exists(path)) return null;
-
-            try
+            var candidates = new[]
             {
-                var bmp = new BitmapImage();
-                bmp.BeginInit();
-                bmp.CacheOption = BitmapCacheOption.OnLoad;
-                bmp.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
-                bmp.UriSource = new Uri(path, UriKind.Absolute);
-                bmp.EndInit();
-                bmp.Freeze();
-                return MakeImage(bmp);
+                Path.Combine(carDir, "carbox.bmp"),
+                Path.Combine(carDir, "box.bmp"),
+            };
+
+            foreach (var path in candidates)
+            {
+                if (!File.Exists(path)) continue;
+
+                try
+                {
+                    var bmp = new BitmapImage();
+                    bmp.BeginInit();
+                    bmp.CacheOption = BitmapCacheOption.OnLoad;
+                    bmp.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
+                    bmp.UriSource = new Uri(path, UriKind.Absolute);
+                    bmp.EndInit();
+                    bmp.Freeze();
+                    return MakeImage(bmp);
+                }
+                catch
+                {
+                    return null;
+                }
             }
-            catch { return null; }
+
+            return null;
         }
 
         public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)
@@ -338,3 +351,4 @@ namespace CupGen.UI.Converters
         }
     }
 }
+

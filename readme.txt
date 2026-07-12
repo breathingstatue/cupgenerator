@@ -1,3 +1,8 @@
+CupGenerator v.1.5
+Fixed crashes occurring after the first race:
+Removed an unnecessary built-in cup memory dependency.
+Added safe validation for player data read from race results.
+
 CupGenerator v.1.4
 Car Tooltip carbox preview works on box.bmp as well
 Updated handling of car packs and track packs (by Rod aka HansyRod)

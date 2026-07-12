@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 #include <direct.h>
@@ -118,11 +119,6 @@ static inline int selected_index() {
     return p ? *reinterpret_cast<int*>(p + 4) : 0;
 }
 
-static inline uint8_t* builtin_cups_base() {
-    if (!g_addrs.rva_BuiltinCupsBase) return nullptr;
-    return reinterpret_cast<uint8_t*>(AbsFromMaybeRva(g_addrs.rva_BuiltinCupsBase));
-}
-
 static inline uint8_t* custom_cups_list_ptr() {
     if (!g_addrs.rva_CustomCupsList) return nullptr;
     auto pptr = reinterpret_cast<uint8_t**>(AbsFromMaybeRva(g_addrs.rva_CustomCupsList));
@@ -134,12 +130,8 @@ static inline const char* cup_id_from_ptr(uint8_t* cup) {
 }
 
 static inline uint8_t* selected_cup_ptr_from_index(int idx) {
-    constexpr int kBuiltinCount = 5;
-    if (idx < 0) return nullptr;
-    if (idx < kBuiltinCount) {
-        auto base = builtin_cups_base();
-        return base ? (base + idx * CUP_STRIDE) : nullptr;
-    }
+    constexpr int kBuiltinCount = 4;
+    if (idx < kBuiltinCount) return nullptr;
     auto list = custom_cups_list_ptr();
     if (!list) return nullptr;
     const int ci = idx - kBuiltinCount;
@@ -330,22 +322,11 @@ static bool ParseDiffAndStageCount(const char* cupPath, int& outDiff, int& outSt
     return true;
 }
 
-// Find a cup struct by id in builtin (first ~5) or custom list (scan until empty id)
+// Find a custom cup struct by id (scan until the first empty entry).
 static uint8_t* FindCupStructById(const char* targetId) {
     if (!targetId || !*targetId) return nullptr;
 
-    // 1) Builtins: index 0..4 (safe, small)
-    {
-        uint8_t* base = builtin_cups_base();
-        for (int i = 0; i < 5; ++i) {
-            uint8_t* c = base + i * CUP_STRIDE;
-            if (const char* id = cup_id_from_ptr(c)) {
-                if (*id && _stricmp(id, targetId) == 0) return c;
-            }
-        }
-    }
-
-    // 2) Customs: scan up to a sane cap (e.g. 512), stop at first empty id
+    // Scan up to a sane cap (e.g. 512), stopping at the first empty id.
     {
         uint8_t* base = custom_cups_list_ptr();   // ← use the correct helper
         if (base) {
@@ -1008,14 +989,35 @@ static void del_tmp(const std::string& cupId, const std::string& prof) {
     std::string p = temp_path(cupId, prof); remove(p.c_str());
 }
 
+static bool is_readable_c_string(const char* value, size_t maxLength) {
+    if (!value || maxLength == 0) return false;
+
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(value, &mbi, sizeof(mbi)) != sizeof(mbi) ||
+        mbi.State != MEM_COMMIT ||
+        (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS))) {
+        return false;
+    }
+
+    const DWORD readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
+        PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    if (!(mbi.Protect & readable)) return false;
+
+    const uintptr_t start = reinterpret_cast<uintptr_t>(value);
+    const uintptr_t regionEnd = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+    if (start >= regionEnd || maxLength > regionEnd - start) return false;
+
+    return strnlen_s(value, maxLength) < maxLength;
+}
+
 static int resolve_player_index_by_name(const std::vector<uptr>& ids) {
     const std::string prof = active_profile_name();
     for (size_t i = 0; i < ids.size(); ++i) {
         // compute pointer using uptr to avoid truncation on x86
         const uptr raw = ids[i];
-        if (!raw) continue;
+        if (!raw || raw > (std::numeric_limits<uptr>::max)() - OFF_PLAYER_NAME) continue;
         const char* nm = reinterpret_cast<const char*>(raw + OFF_PLAYER_NAME);
-        if (nm && _stricmp(nm, prof.c_str()) == 0) return (int)i;
+        if (is_readable_c_string(nm, 64) && _stricmp(nm, prof.c_str()) == 0) return (int)i;
     }
     return 0;
 }

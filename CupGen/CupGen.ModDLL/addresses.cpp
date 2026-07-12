@@ -67,7 +67,6 @@ static bool LoadUpdateJson_ModFolder(HookAddrs& out) {
     ok += getHex("\"rva_RaceResults\"", out.rva_RaceResults);
     ok += getHex("\"rva_CupFinalize\"", out.rva_CupFinalize);
     ok += getHex("\"rva_MenuState\"", out.rva_MenuState);
-    ok += getHex("\"rva_BuiltinCupsBase\"", out.rva_BuiltinCupsBase);
     ok += getHex("\"rva_CustomCupsList\"", out.rva_CustomCupsList);
     ok += getHex("\"rva_FrontendInit\"", out.rva_FrontendInit);
 

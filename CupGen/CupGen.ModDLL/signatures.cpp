@@ -133,7 +133,6 @@ bool LoadHookRVAsFromJson(const wchar_t* jsonPath, HookAddrs& out) {
     extract_hex_field(w, L"rva_RaceResults", out.rva_RaceResults);
     extract_hex_field(w, L"rva_CupFinalize", out.rva_CupFinalize);
     extract_hex_field(w, L"rva_MenuState", out.rva_MenuState);
-    extract_hex_field(w, L"rva_BuiltinCupsBase", out.rva_BuiltinCupsBase);
     extract_hex_field(w, L"rva_CustomCupsList", out.rva_CustomCupsList);
     extract_hex_field(w, L"rva_FrontendInit", out.rva_FrontendInit);
 
@@ -217,7 +216,6 @@ bool SaveHookRVAsToJson(const wchar_t* jsonPath,
         L"  \"rva_RaceResults\": \"0x%08X\",\n"
         L"  \"rva_CupFinalize\": \"0x%08X\",\n"
         L"  \"rva_MenuState\": \"0x%08X\",\n"
-        L"  \"rva_BuiltinCupsBase\": \"0x%08X\",\n"
         L"  \"rva_CustomCupsList\": \"0x%08X\",\n"
         L"  \"rva_FrontendInit\": \"0x%08X\",\n"
         L"}\n",
@@ -235,7 +233,6 @@ bool SaveHookRVAsToJson(const wchar_t* jsonPath,
         (unsigned)a.rva_RaceResults,
         (unsigned)a.rva_CupFinalize,
         (unsigned)a.rva_MenuState,
-        (unsigned)a.rva_BuiltinCupsBase,
         (unsigned)a.rva_CustomCupsList,
         (unsigned)a.rva_FrontendInit
     );
